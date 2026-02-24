@@ -1,15 +1,15 @@
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from jqueue.domain.errors import JobNotFoundError
 from jqueue.domain.models import Job, JobStatus, QueueState
 
-
 # ---------------------------------------------------------------------------
 # JobStatus
 # ---------------------------------------------------------------------------
+
 
 def test_job_status_values():
     assert JobStatus.QUEUED.value == "queued"
@@ -19,12 +19,13 @@ def test_job_status_values():
 
 def test_job_status_is_str_enum():
     assert isinstance(JobStatus.QUEUED, str)
-    assert JobStatus.QUEUED == "queued"
+    assert JobStatus.QUEUED.value == "queued"
 
 
 # ---------------------------------------------------------------------------
 # Job
 # ---------------------------------------------------------------------------
+
 
 def test_job_new_defaults():
     job = Job.new("send_email", b"payload")
@@ -51,7 +52,7 @@ def test_job_new_assigns_unique_ids():
 def test_job_is_frozen():
     job = Job.new("task", b"data")
     with pytest.raises(Exception):
-        job.entrypoint = "other"  # type: ignore[misc]
+        job.entrypoint = "other"
 
 
 def test_job_payload_accepts_bytes():
@@ -80,14 +81,14 @@ def test_job_with_status_returns_new_instance():
 
 def test_job_with_heartbeat_sets_timestamp():
     job = Job.new("task", b"data")
-    ts = datetime.now(timezone.utc)
+    ts = datetime.now(UTC)
     updated = job.with_heartbeat(ts)
     assert updated.heartbeat_at == ts
     assert job.heartbeat_at is None  # original unchanged
 
 
 def test_job_with_heartbeat_none_clears():
-    ts = datetime.now(timezone.utc)
+    ts = datetime.now(UTC)
     job = Job.new("task", b"data").with_heartbeat(ts)
     cleared = job.with_heartbeat(None)
     assert cleared.heartbeat_at is None
@@ -111,6 +112,7 @@ def test_job_roundtrip_via_json():
 # ---------------------------------------------------------------------------
 # QueueState
 # ---------------------------------------------------------------------------
+
 
 def test_queue_state_defaults():
     state = QueueState()
@@ -150,8 +152,8 @@ def test_queued_jobs_sorted_by_priority():
 
 
 def test_queued_jobs_same_priority_sorted_by_created_at():
-    earlier = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    later = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    earlier = datetime(2024, 1, 1, tzinfo=UTC)
+    later = datetime(2024, 1, 2, tzinfo=UTC)
     job_later = Job(entrypoint="task", payload=b"later", created_at=later)
     job_earlier = Job(entrypoint="task", payload=b"earlier", created_at=earlier)
     state = QueueState(jobs=(job_later, job_earlier))
@@ -254,20 +256,20 @@ def test_with_job_removed_not_found_raises():
 def test_requeue_stale_no_stale_returns_self():
     job = Job.new("task", b"data")
     state = QueueState(jobs=(job,))
-    cutoff = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2020, 1, 1, tzinfo=UTC)
     result = state.requeue_stale(cutoff)
     assert result is state
 
 
 def test_requeue_stale_old_heartbeat():
-    old_ts = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    old_ts = datetime(2020, 1, 1, tzinfo=UTC)
     job = (
         Job.new("task", b"data")
         .with_status(JobStatus.IN_PROGRESS)
         .with_heartbeat(old_ts)
     )
     state = QueueState(jobs=(job,))
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC)
     new_state = state.requeue_stale(cutoff)
     assert new_state.jobs[0].status == JobStatus.QUEUED
     assert new_state.jobs[0].heartbeat_at is None
@@ -278,20 +280,20 @@ def test_requeue_stale_none_heartbeat_treated_as_stale():
     job = Job.new("task", b"data").with_status(JobStatus.IN_PROGRESS)
     assert job.heartbeat_at is None
     state = QueueState(jobs=(job,))
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC)
     new_state = state.requeue_stale(cutoff)
     assert new_state.jobs[0].status == JobStatus.QUEUED
 
 
 def test_requeue_stale_fresh_heartbeat_not_affected():
-    future_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+    future_ts = datetime.now(UTC) + timedelta(hours=1)
     job = (
         Job.new("task", b"data")
         .with_status(JobStatus.IN_PROGRESS)
         .with_heartbeat(future_ts)
     )
     state = QueueState(jobs=(job,))
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC)
     result = state.requeue_stale(cutoff)
     assert result is state  # unchanged
 
@@ -300,14 +302,14 @@ def test_requeue_stale_only_affects_in_progress():
     queued = Job.new("task", b"1")
     dead = Job.new("task", b"2").with_status(JobStatus.DEAD)
     state = QueueState(jobs=(queued, dead))
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC)
     result = state.requeue_stale(cutoff)
     assert result is state  # neither QUEUED nor DEAD are touched
 
 
 def test_requeue_stale_mixed_batch():
-    old_ts = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    future_ts = datetime.now(timezone.utc) + timedelta(hours=1)
+    old_ts = datetime(2020, 1, 1, tzinfo=UTC)
+    future_ts = datetime.now(UTC) + timedelta(hours=1)
     stale = (
         Job.new("task", b"stale")
         .with_status(JobStatus.IN_PROGRESS)
@@ -319,7 +321,7 @@ def test_requeue_stale_mixed_batch():
         .with_heartbeat(future_ts)
     )
     state = QueueState(jobs=(stale, fresh))
-    cutoff = datetime.now(timezone.utc)
+    cutoff = datetime.now(UTC)
     new_state = state.requeue_stale(cutoff)
     stale_result = new_state.find(stale.id)
     fresh_result = new_state.find(fresh.id)

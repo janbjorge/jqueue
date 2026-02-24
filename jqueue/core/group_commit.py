@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from jqueue.core import codec
 from jqueue.domain.errors import CASConflictError, JQueueError
@@ -133,7 +133,7 @@ class GroupCommitLoop:
             new_state = state
             for job in available:
                 updated = job.with_status(JobStatus.IN_PROGRESS).with_heartbeat(
-                    datetime.now(timezone.utc)
+                    datetime.now(UTC)
                 )
                 new_state = new_state.with_job_replaced(updated)
                 claimed.append(updated)
@@ -169,7 +169,7 @@ class GroupCommitLoop:
             if job is None:
                 raise JobNotFoundError(job_id)
             return state.with_job_replaced(
-                job.with_heartbeat(datetime.now(timezone.utc))
+                job.with_heartbeat(datetime.now(UTC))
             )
 
         await self._submit(_fn)
@@ -224,7 +224,7 @@ class GroupCommitLoop:
                 state = codec.decode(content)
 
                 # Sweep stale jobs on every write cycle (free — no extra I/O)
-                cutoff = datetime.now(timezone.utc) - self.stale_timeout
+                cutoff = datetime.now(UTC) - self.stale_timeout
                 state = state.requeue_stale(cutoff)
 
                 per_op_errors: dict[int, Exception] = {}

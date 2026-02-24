@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from jqueue.core import codec
 from jqueue.domain.errors import CASConflictError, JobNotFoundError
@@ -78,7 +78,7 @@ class DirectQueue:
             new_state = state
             for job in available:
                 updated = job.with_status(JobStatus.IN_PROGRESS).with_heartbeat(
-                    datetime.now(timezone.utc)
+                    datetime.now(UTC)
                 )
                 new_state = new_state.with_job_replaced(updated)
                 claimed.append(updated)
@@ -112,7 +112,7 @@ class DirectQueue:
             if job is None:
                 raise JobNotFoundError(job_id)
             return state.with_job_replaced(
-                job.with_heartbeat(datetime.now(timezone.utc))
+                job.with_heartbeat(datetime.now(UTC))
             )
 
         await self._mutate(_fn)
@@ -123,7 +123,7 @@ class DirectQueue:
 
         Returns the number of jobs re-queued.
         """
-        cutoff = datetime.now(timezone.utc) - timeout
+        cutoff = datetime.now(UTC) - timeout
         requeued = 0
 
         def _fn(state: QueueState) -> QueueState:

@@ -59,7 +59,7 @@ class HeartbeatManager:
         default=None, init=False, repr=False
     )
 
-    async def __aenter__(self) -> "HeartbeatManager":
+    async def __aenter__(self) -> HeartbeatManager:
         self._task = asyncio.create_task(
             self._beat(), name=f"jqueue-heartbeat-{self.job_id}"
         )

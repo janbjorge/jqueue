@@ -57,7 +57,7 @@ class BrokerQueue:
             stale_timeout=self.stale_timeout,
         )
 
-    async def __aenter__(self) -> "BrokerQueue":
+    async def __aenter__(self) -> BrokerQueue:
         await self._loop.start()
         return self
 

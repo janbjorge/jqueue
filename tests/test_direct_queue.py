@@ -9,7 +9,6 @@ from jqueue.core.direct import DirectQueue
 from jqueue.domain.errors import CASConflictError, JobNotFoundError
 from jqueue.domain.models import JobStatus
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -32,3 +32,11 @@ select = ["E", "F", "I", "UP"]
 [tool.mypy]
 strict = true
 python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = ["aioboto3", "aioboto3.*", "google.cloud.storage", "google.cloud.*", "google.api_core", "google.api_core.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false

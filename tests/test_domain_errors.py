@@ -1,6 +1,11 @@
 import pytest
 
-from jqueue.domain.errors import CASConflictError, JQueueError, JobNotFoundError, StorageError
+from jqueue.domain.errors import (
+    CASConflictError,
+    JobNotFoundError,
+    JQueueError,
+    StorageError,
+)
 
 
 def test_jqueue_error_is_exception():

@@ -7,7 +7,6 @@ from jqueue.core.broker import BrokerQueue
 from jqueue.domain.errors import JobNotFoundError
 from jqueue.domain.models import JobStatus
 
-
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------

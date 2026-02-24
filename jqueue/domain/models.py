@@ -13,13 +13,13 @@ model_copy(update=...), following a functional-update style.
 
 import base64
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Lifecycle states for a queued job."""
 
     QUEUED = "queued"
@@ -47,7 +47,7 @@ class Job(BaseModel):
     payload: bytes
     status: JobStatus = JobStatus.QUEUED
     priority: int = 0
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     heartbeat_at: datetime | None = None
 
     @field_validator("payload", mode="before")
@@ -61,7 +61,8 @@ class Job(BaseModel):
                 return base64.b64decode(v)
             case _:
                 raise ValueError(
-                    f"payload must be bytes or a base64-encoded str, got {type(v).__name__}"
+                    "payload must be bytes or a base64-encoded str, "
+                    f"got {type(v).__name__}"
                 )
 
     @field_serializer("payload")
@@ -154,9 +155,7 @@ class QueueState(BaseModel):
         new_jobs = tuple(j for j in self.jobs if j.id != job_id)
         if len(new_jobs) == original_len:
             raise JobNotFoundError(job_id)
-        return self.model_copy(
-            update={"jobs": new_jobs, "version": self.version + 1}
-        )
+        return self.model_copy(update={"jobs": new_jobs, "version": self.version + 1})
 
     def requeue_stale(self, cutoff: datetime) -> "QueueState":
         """
@@ -175,6 +174,4 @@ class QueueState(BaseModel):
         )
         if new_jobs == self.jobs:
             return self
-        return self.model_copy(
-            update={"jobs": new_jobs, "version": self.version + 1}
-        )
+        return self.model_copy(update={"jobs": new_jobs, "version": self.version + 1})

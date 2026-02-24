@@ -5,10 +5,10 @@ import pytest
 from jqueue.adapters.storage.gcs import GCSStorage
 from jqueue.domain.errors import CASConflictError, StorageError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_storage() -> tuple[GCSStorage, MagicMock, MagicMock]:
     """Return (storage, blob_mock, client_mock) with wired-up fakes."""
@@ -25,9 +25,11 @@ def _make_storage() -> tuple[GCSStorage, MagicMock, MagicMock]:
 # async read() — patches _sync_read to bypass asyncio.to_thread
 # ---------------------------------------------------------------------------
 
+
 async def test_read_returns_content_and_generation():
     storage, _, _ = _make_storage()
-    with patch.object(storage, "_sync_read", return_value=(b'{"version": 0, "jobs": []}', "42")):
+    fake = (b'{"version": 0, "jobs": []}', "42")
+    with patch.object(storage, "_sync_read", return_value=fake):
         content, etag = await storage.read()
     assert content == b'{"version": 0, "jobs": []}'
     assert etag == "42"
@@ -58,6 +60,7 @@ async def test_read_cas_conflict_propagated():
 # ---------------------------------------------------------------------------
 # async write() — patches _sync_write to bypass asyncio.to_thread
 # ---------------------------------------------------------------------------
+
 
 async def test_write_returns_generation():
     storage, _, _ = _make_storage()
@@ -91,6 +94,7 @@ async def test_write_exception_becomes_storage_error():
 # _sync_read() — tests the synchronous implementation directly
 # ---------------------------------------------------------------------------
 
+
 def test_sync_read_success():
     pytest.importorskip("google.api_core.exceptions")
     storage, blob, _ = _make_storage()
@@ -123,6 +127,7 @@ def test_sync_read_calls_correct_bucket_and_blob():
 # ---------------------------------------------------------------------------
 # _sync_write() — tests the synchronous implementation directly
 # ---------------------------------------------------------------------------
+
 
 def test_sync_write_none_if_match_uses_generation_zero():
     pytest.importorskip("google.api_core.exceptions")

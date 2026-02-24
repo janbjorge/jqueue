@@ -18,6 +18,7 @@ First write (if_match=None):
 Note: google-cloud-storage is synchronous. All operations are wrapped in
 asyncio.to_thread to avoid blocking the event loop.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,13 +51,13 @@ class GCSStorage:
         if self.client is not None:
             return self.client
         try:
-            from google.cloud import storage  # type: ignore[import-untyped]
+            from google.cloud import storage
         except ImportError as exc:
             raise ImportError(
                 "GCSStorage requires google-cloud-storage. "
                 "Install with: pip install 'jqueue[gcs]'"
             ) from exc
-        return storage.Client()  # type: ignore[return-value]
+        return storage.Client()
 
     async def read(self) -> tuple[bytes, str | None]:
         """Read the state blob. Returns (b"", None) if the blob does not exist."""
@@ -86,7 +87,7 @@ class GCSStorage:
 
     def _sync_read(self) -> tuple[bytes, str | None]:
         try:
-            from google.api_core import exceptions as gapi_exc  # type: ignore[import-untyped]
+            from google.api_core import exceptions as gapi_exc
         except ImportError as exc:
             raise ImportError(
                 "GCSStorage requires google-cloud-storage. "
@@ -94,7 +95,7 @@ class GCSStorage:
             ) from exc
 
         client = self._get_client()
-        blob = client.bucket(self.bucket_name).blob(self.blob_name)  # type: ignore[attr-defined]
+        blob = client.bucket(self.bucket_name).blob(self.blob_name)
         try:
             content: bytes = blob.download_as_bytes()
             return content, str(blob.generation)
@@ -103,7 +104,7 @@ class GCSStorage:
 
     def _sync_write(self, content: bytes, if_match: str | None) -> str:
         try:
-            from google.api_core import exceptions as gapi_exc  # type: ignore[import-untyped]
+            from google.api_core import exceptions as gapi_exc
         except ImportError as exc:
             raise ImportError(
                 "GCSStorage requires google-cloud-storage. "
@@ -111,13 +112,13 @@ class GCSStorage:
             ) from exc
 
         client = self._get_client()
-        blob = client.bucket(self.bucket_name).blob(self.blob_name)  # type: ignore[attr-defined]
+        blob = client.bucket(self.bucket_name).blob(self.blob_name)
 
         # if_generation_match=0 → "blob must not exist yet"
         gen_match: int = 0 if if_match is None else int(if_match)
 
         try:
-            blob.upload_from_string(  # type: ignore[attr-defined]
+            blob.upload_from_string(
                 content,
                 content_type="application/json",
                 if_generation_match=gen_match,
@@ -125,5 +126,5 @@ class GCSStorage:
         except gapi_exc.PreconditionFailed as exc:
             raise CASConflictError("GCS generation mismatch") from exc
 
-        blob.reload()  # type: ignore[attr-defined]
+        blob.reload()
         return str(blob.generation)

@@ -5,7 +5,6 @@ import pytest
 from jqueue.adapters.storage.s3 import S3Storage, _s3_error_code
 from jqueue.domain.errors import CASConflictError, StorageError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

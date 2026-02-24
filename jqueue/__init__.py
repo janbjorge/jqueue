@@ -63,7 +63,12 @@ from jqueue.adapters.storage.memory import InMemoryStorage
 from jqueue.core.broker import BrokerQueue
 from jqueue.core.direct import DirectQueue
 from jqueue.core.heartbeat import HeartbeatManager
-from jqueue.domain.errors import CASConflictError, JQueueError, JobNotFoundError, StorageError
+from jqueue.domain.errors import (
+    CASConflictError,
+    JobNotFoundError,
+    JQueueError,
+    StorageError,
+)
 from jqueue.domain.models import Job, JobStatus, QueueState
 from jqueue.ports.storage import ObjectStoragePort
 

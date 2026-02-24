@@ -61,11 +61,11 @@ async def test_content_unchanged_after_failed_write():
 
 async def test_sequential_writes():
     storage = InMemoryStorage()
-    etag = await storage.write(b"v1", if_match=None)
-    _, etag = await storage.read()
-    await storage.write(b"v2", if_match=etag)
-    _, etag = await storage.read()
-    await storage.write(b"v3", if_match=etag)
+    await storage.write(b"v1", if_match=None)
+    _, etag1 = await storage.read()
+    await storage.write(b"v2", if_match=etag1)
+    _, etag2 = await storage.read()
+    await storage.write(b"v3", if_match=etag2)
     content, _ = await storage.read()
     assert content == b"v3"
 
@@ -104,8 +104,6 @@ async def test_concurrent_writes_exactly_one_wins():
 async def test_read_is_consistent_under_concurrent_reads():
     storage = InMemoryStorage()
     await storage.write(b"consistent", if_match=None)
-    results = await asyncio.gather(
-        storage.read(), storage.read(), storage.read()
-    )
+    results = await asyncio.gather(storage.read(), storage.read(), storage.read())
     for content, _ in results:
         assert content == b"consistent"

@@ -17,6 +17,7 @@ First write (if_match=None):
 Compatible with S3-compatible storage that supports conditional writes:
   MinIO, Cloudflare R2, Tigris, etc.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -52,12 +53,12 @@ class S3Storage:
         if self.session is not None:
             return self.session
         try:
-            import aioboto3  # type: ignore[import-untyped]
+            import aioboto3
         except ImportError as exc:
             raise ImportError(
                 "S3Storage requires aioboto3. Install with: pip install 'jqueue[s3]'"
             ) from exc
-        return aioboto3.Session()  # type: ignore[return-value]
+        return aioboto3.Session()
 
     def _client_kwargs(self) -> dict[str, str]:
         """Build kwargs forwarded to the S3 client constructor."""
@@ -72,7 +73,7 @@ class S3Storage:
         """Read the state object. Returns (b"", None) if the key does not exist."""
         session = self._get_session()
         try:
-            async with session.client("s3", **self._client_kwargs()) as s3:  # type: ignore[attr-defined]
+            async with session.client("s3", **self._client_kwargs()) as s3:
                 try:
                     response = await s3.get_object(Bucket=self.bucket, Key=self.key)
                     content: bytes = await response["Body"].read()
@@ -95,7 +96,7 @@ class S3Storage:
         """CAS write. Raises CASConflictError on ETag mismatch (PreconditionFailed)."""
         session = self._get_session()
         try:
-            async with session.client("s3", **self._client_kwargs()) as s3:  # type: ignore[attr-defined]
+            async with session.client("s3", **self._client_kwargs()) as s3:
                 put_kwargs: dict[str, str | bytes] = {
                     "Bucket": self.bucket,
                     "Key": self.key,

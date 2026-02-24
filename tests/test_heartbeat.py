@@ -6,7 +6,6 @@ import pytest
 from jqueue.core.heartbeat import HeartbeatManager
 from jqueue.domain.errors import JQueueError
 
-
 # ---------------------------------------------------------------------------
 # Minimal queue stub
 # ---------------------------------------------------------------------------

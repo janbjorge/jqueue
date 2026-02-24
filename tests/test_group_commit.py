@@ -1,20 +1,21 @@
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
 
 from jqueue.adapters.storage.memory import InMemoryStorage
 from jqueue.core.group_commit import GroupCommitLoop
-from jqueue.domain.errors import CASConflictError, JQueueError, JobNotFoundError
+from jqueue.domain.errors import CASConflictError, JobNotFoundError, JQueueError
 from jqueue.domain.models import JobStatus
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
-async def loop() -> GroupCommitLoop:  # type: ignore[misc]
+async def loop() -> AsyncIterator[GroupCommitLoop]:
     storage = InMemoryStorage()
     gcl = GroupCommitLoop(storage=storage)
     await gcl.start()
@@ -25,6 +26,7 @@ async def loop() -> GroupCommitLoop:  # type: ignore[misc]
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
+
 
 async def test_start_creates_task() -> None:
     storage = InMemoryStorage()
@@ -79,6 +81,7 @@ async def test_stop_drains_pending_ops() -> None:
 # enqueue
 # ---------------------------------------------------------------------------
 
+
 async def test_enqueue_returns_job(loop: GroupCommitLoop) -> None:
     job = await loop.enqueue("send_email", b"payload")
     assert job.entrypoint == "send_email"
@@ -95,6 +98,7 @@ async def test_enqueue_stores_in_state(loop: GroupCommitLoop) -> None:
 # ---------------------------------------------------------------------------
 # dequeue
 # ---------------------------------------------------------------------------
+
 
 async def test_dequeue_returns_in_progress(loop: GroupCommitLoop) -> None:
     await loop.enqueue("task", b"data")
@@ -127,6 +131,7 @@ async def test_dequeue_batch_size(loop: GroupCommitLoop) -> None:
 # ack
 # ---------------------------------------------------------------------------
 
+
 async def test_ack_removes_job(loop: GroupCommitLoop) -> None:
     job = await loop.enqueue("task", b"data")
     [dequeued] = await loop.dequeue("task")
@@ -138,6 +143,7 @@ async def test_ack_removes_job(loop: GroupCommitLoop) -> None:
 # ---------------------------------------------------------------------------
 # nack
 # ---------------------------------------------------------------------------
+
 
 async def test_nack_returns_to_queued(loop: GroupCommitLoop) -> None:
     await loop.enqueue("task", b"data")
@@ -158,6 +164,7 @@ async def test_nack_missing_job_raises(loop: GroupCommitLoop) -> None:
 # ---------------------------------------------------------------------------
 # heartbeat
 # ---------------------------------------------------------------------------
+
 
 async def test_heartbeat_updates_timestamp(loop: GroupCommitLoop) -> None:
     await loop.enqueue("task", b"data")
@@ -180,6 +187,7 @@ async def test_heartbeat_missing_job_raises(loop: GroupCommitLoop) -> None:
 # read_state
 # ---------------------------------------------------------------------------
 
+
 async def test_read_state_empty(loop: GroupCommitLoop) -> None:
     state = await loop.read_state()
     assert state.jobs == ()
@@ -194,6 +202,7 @@ async def test_read_state_after_enqueue(loop: GroupCommitLoop) -> None:
 # ---------------------------------------------------------------------------
 # Concurrency — batching
 # ---------------------------------------------------------------------------
+
 
 async def test_concurrent_enqueues_all_committed(loop: GroupCommitLoop) -> None:
     jobs = await asyncio.gather(
@@ -230,12 +239,14 @@ async def test_per_op_error_isolation(loop: GroupCommitLoop) -> None:
 
     state = await loop.read_state()
     new_job = results[1]
+    assert not isinstance(new_job, BaseException)
     assert state.find(new_job.id) is not None
 
 
 # ---------------------------------------------------------------------------
 # Stale-job requeue on write cycle
 # ---------------------------------------------------------------------------
+
 
 async def test_stale_jobs_requeued_on_write_cycle() -> None:
     """GroupCommitLoop auto-requeues stale IN_PROGRESS jobs every write cycle."""
@@ -262,6 +273,7 @@ async def test_stale_jobs_requeued_on_write_cycle() -> None:
 # ---------------------------------------------------------------------------
 # CAS retry
 # ---------------------------------------------------------------------------
+
 
 async def test_commit_batch_retries_on_cas_conflict() -> None:
     """GroupCommitLoop should retry on CASConflictError up to _MAX_RETRIES times."""
