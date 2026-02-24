@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "jqueue"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Storage-agnostic job queue using object storage with compare-and-set semantics"
 readme = "README.md"
 license = { text = "MIT" }
@@ -58,5 +58,15 @@ module = ["aioboto3", "aioboto3.*", "google.cloud.storage", "google.cloud.*", "g
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["jqueue._version"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "jqueue/_version.py"

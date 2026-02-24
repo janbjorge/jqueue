@@ -73,7 +73,14 @@ from jqueue.domain.errors import (
 from jqueue.domain.models import Job, JobStatus, QueueState
 from jqueue.ports.storage import ObjectStoragePort
 
+try:
+    from jqueue._version import __version__
+except ImportError:
+    __version__ = "0.0.0+unknown"
+
 __all__ = [
+    # Version
+    "__version__",
     # Domain models
     "Job",
     "JobStatus",
