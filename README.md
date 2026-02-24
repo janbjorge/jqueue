@@ -782,9 +782,14 @@ round-trip per batch:
 
 | Backend | Round-trip latency | DirectQueue | BrokerQueue (batch ~10) |
 |---|---|---|---|
-| InMemory | < 1 ms | ~500 ops/s | ~2 000 ops/s |
-| Filesystem | 1-5 ms | ~100 ops/s | ~500 ops/s |
+| InMemory | < 1 ms | ~350 ops/s | ~3 200 ops/s |
+| Filesystem | 1-5 ms | ~220 ops/s | ~700 ops/s |
 | S3 / GCS (same region) | 50-150 ms | ~5-15 ops/s | ~50-100 ops/s |
+
+**Note:** InMemory and Filesystem numbers are from `tools/benchmark_storage.py` running
+1000 operations with concurrency levels 10 and 50 on a development machine. S3/GCS numbers
+are estimates based on typical round-trip latencies. Run the benchmark tool to measure
+performance on your hardware: `uv run tools/benchmark_storage.py`.
 
 The key multiplier for `BrokerQueue` is the average batch size, which grows naturally
 with concurrency: the more callers are waiting while a write is in-flight, the larger
