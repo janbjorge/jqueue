@@ -1,12 +1,10 @@
 # jqueue
 
 A lightweight, storage-agnostic job queue for Python that runs on top of ordinary object
-storage — S3, GCS, a local file, or an in-memory buffer. No message broker, no database,
+storage (S3, GCS, a local file, or an in-memory buffer). No message broker, no database,
 no sidecar process required.
 
 Inspired by the [turbopuffer object-storage queue pattern](https://turbopuffer.com/blog/object-storage-queue).
-
----
 
 ## Contents
 
@@ -16,8 +14,8 @@ Inspired by the [turbopuffer object-storage queue pattern](https://turbopuffer.c
 - [Use cases](#use-cases)
 - [How it works](#how-it-works)
   - [Compare-and-set writes](#compare-and-set-writes)
-  - [DirectQueue — one CAS write per operation](#directqueue--one-cas-write-per-operation)
-  - [BrokerQueue — group commit](#brokerqueue--group-commit)
+  - [DirectQueue: one CAS write per operation](#directqueue--one-cas-write-per-operation)
+  - [BrokerQueue: group commit](#brokerqueue--group-commit)
   - [Heartbeats and stale-job recovery](#heartbeats-and-stale-job-recovery)
   - [Wire format](#wire-format)
 - [Storage adapters](#storage-adapters)
@@ -31,31 +29,27 @@ Inspired by the [turbopuffer object-storage queue pattern](https://turbopuffer.c
 - [Architecture](#architecture)
 - [Limitations and trade-offs](#limitations-and-trade-offs)
 
----
-
 ## Why object storage?
 
 Traditional job queues add a dependency: Redis, RabbitMQ, SQS, a Postgres table. Each comes
-with operational overhead — provisioning, monitoring, capacity planning, and another failure
+with operational overhead (provisioning, monitoring, capacity planning) and another failure
 domain to manage.
 
 For workloads that don't need sub-millisecond latency or thousands of operations per second,
-object storage is a surprisingly capable alternative:
+object storage works well:
 
 | Property | Object storage queue |
 |---|---|
-| **Durability** | 11 nines (S3/GCS) — survives entire AZ outages |
+| **Durability** | 11 nines (S3/GCS), survives entire AZ outages |
 | **Cost** | ~$0.004/10 000 operations (S3 PUT pricing) |
-| **Infrastructure** | Zero — uses storage you already have |
+| **Infrastructure** | None. Uses storage you already have |
 | **Concurrency safety** | CAS writes (If-Match / if_generation_match) |
 | **Exactly-once delivery** | Guaranteed by the CAS protocol |
-| **Ops/sec** | ~1–100 ops/s depending on backend and batching |
+| **Ops/sec** | ~1-100 ops/s depending on backend and batching |
 
 The queue state lives in **a single JSON file**. Every mutation is a conditional write that
 only succeeds if the file hasn't changed since you last read it. Concurrent writers that lose
 the race retry automatically.
-
----
 
 ## Installation
 
@@ -74,8 +68,6 @@ pip install "jqueue[s3,gcs]"
 ```
 
 Requires Python 3.12+.
-
----
 
 ## Quick start
 
@@ -100,7 +92,7 @@ async def main():
 asyncio.run(main())
 ```
 
-Switch to a real backend by swapping the storage adapter — the queue logic is identical:
+Switch to a real backend by swapping the storage adapter. The queue logic is identical:
 
 ```python
 # Local file (single machine)
@@ -115,8 +107,6 @@ storage = S3Storage(bucket="my-bucket", key="queues/jobs.json")
 from jqueue.adapters.storage.gcs import GCSStorage
 storage = GCSStorage(bucket_name="my-bucket", blob_name="queues/jobs.json")
 ```
-
----
 
 ## Use cases
 
@@ -152,7 +142,7 @@ sms_queue   = BrokerQueue(S3Storage(bucket="b", key="queues/sms.json"))
 
 ### Priority work
 
-Lower `priority` value = processed first (think Unix `nice`):
+Lower `priority` value = processed first (same convention as Unix `nice`):
 
 ```python
 await q.enqueue("report", b"payload", priority=0)   # urgent
@@ -177,7 +167,7 @@ except Exception:
 
 ### Testing without infrastructure
 
-`InMemoryStorage` implements the same interface — no mocking required:
+`InMemoryStorage` implements the same interface, so no mocking is needed:
 
 ```python
 async def test_email_worker():
@@ -200,8 +190,6 @@ storage = S3Storage(
     region_name="us-east-1",
 )
 ```
-
----
 
 ## How it works
 
@@ -244,7 +232,7 @@ write (If-Match: abc) → ✓ "xyz"
                                 write (If-Match: xyz) → ✓ "pqr"
 ```
 
-### DirectQueue — one CAS write per operation
+### DirectQueue: one CAS write per operation
 
 `DirectQueue` is the simplest implementation. Every call to `enqueue`, `dequeue`, `ack`,
 `nack`, or `heartbeat` performs its own independent CAS cycle:
@@ -257,10 +245,10 @@ enqueue("task", b"payload")
 ```
 
 **Retry policy:** up to 10 retries on `CASConflictError`, with linear back-off
-(10 ms × attempt number).
+(10 ms x attempt number).
 
 Use `DirectQueue` when:
-- throughput is ~1–5 ops/s
+- throughput is ~1-5 ops/s
 - you want the simplest possible code path
 - you're running a single worker
 
@@ -273,13 +261,13 @@ job = await q.enqueue("task", b"data")
 await q.ack(claimed.id)
 ```
 
-### BrokerQueue — group commit
+### BrokerQueue: group commit
 
 When multiple coroutines (or asyncio tasks) call the queue concurrently, each one would
-normally trigger its own storage round-trip. With a 100 ms S3 latency, 10 concurrent
-enqueues would take 10 × 100 ms = 1 second if serialized naively.
+normally trigger its own storage round-trip. With 100 ms S3 latency, 10 concurrent
+enqueues would take 10 x 100 ms = 1 second if serialized naively.
 
-`BrokerQueue` solves this with a **group commit loop** (`GroupCommitLoop`) — a single
+`BrokerQueue` solves this with a **group commit loop** (`GroupCommitLoop`), a single
 background writer task that batches all pending operations into one CAS write:
 
 ```
@@ -303,7 +291,7 @@ Writer:           read → apply op₁,op₂,op₃ → CAS write → resolve fut
    the fresh state and retried with exponential back-off (up to 20 retries, capped at
    ~320 ms).
 
-**Per-operation error isolation:** if one mutation in a batch raises (e.g., `nack` on a
+**Per-operation error isolation:** if one mutation in a batch raises (e.g. `nack` on a
 job that no longer exists), only that caller's future receives the exception. All other
 operations in the same batch commit normally.
 
@@ -314,7 +302,7 @@ Batch: [valid_enqueue, bad_nack, valid_dequeue]
 ```
 
 `BrokerQueue` collapses N concurrent callers into O(1) storage operations per write
-cycle, making it suitable for ~10–100 ops/s depending on backend latency.
+cycle, making it suitable for ~10-100 ops/s depending on backend latency.
 
 ```python
 from jqueue import BrokerQueue, InMemoryStorage
@@ -349,7 +337,7 @@ async with HeartbeatManager(q, job.id, interval=timedelta(seconds=30)):
 **Automatic stale recovery:** On every write cycle, `BrokerQueue` (via `GroupCommitLoop`)
 sweeps `IN_PROGRESS` jobs and resets any whose `heartbeat_at` is older than
 `stale_timeout` (default: 5 minutes) back to `QUEUED`. This requires zero extra storage
-operations — the sweep piggybacks on writes that are already happening.
+operations; the sweep piggybacks on writes that are already happening.
 
 `DirectQueue` exposes this as an explicit call:
 
@@ -388,14 +376,12 @@ The queue state is stored as pretty-printed JSON. Here's a complete example:
 }
 ```
 
-- `version` — monotonically increasing counter, incremented on every successful write.
-- `payload` — arbitrary bytes, base64-encoded for JSON compatibility.
-- `heartbeat_at` — `null` when `QUEUED`; set by `dequeue` and refreshed by `heartbeat`.
+- `version`: monotonically increasing counter, incremented on every successful write.
+- `payload`: arbitrary bytes, base64-encoded for JSON compatibility.
+- `heartbeat_at`: `null` when `QUEUED`; set by `dequeue` and refreshed by `heartbeat`.
 
 Pydantic v2 handles all serialization, including base64 encoding of `bytes` fields and
 ISO-8601 datetime formatting.
-
----
 
 ## Storage adapters
 
@@ -410,8 +396,7 @@ storage = InMemoryStorage(initial_content=b'{"version":0,"jobs":[]}')
 ```
 
 Uses an `asyncio.Lock` to serialise reads and writes. Safe for concurrent coroutines
-in a single event loop. **Not** safe across processes or threads. Ideal for tests and
-local development.
+in a single event loop. Not safe across processes or threads. Good for tests.
 
 ### LocalFileSystemStorage
 
@@ -430,13 +415,13 @@ Uses `fcntl.flock` for POSIX exclusive locking. The etag is the file's `st_mtime
 ```python
 from jqueue.adapters.storage.s3 import S3Storage
 
-# Standard AWS — credentials from environment / IAM role
+# Standard AWS, credentials from environment / IAM role
 storage = S3Storage(bucket="my-bucket", key="queues/jobs.json")
 
 # Explicit region
 storage = S3Storage(bucket="my-bucket", key="jobs.json", region_name="eu-central-1")
 
-# S3-compatible (MinIO, Cloudflare R2, Tigris, …)
+# S3-compatible (MinIO, Cloudflare R2, Tigris, ...)
 storage = S3Storage(
     bucket="my-bucket",
     key="jobs.json",
@@ -455,7 +440,7 @@ storage = S3Storage(
 )
 ```
 
-Uses aioboto3 (async) with `IfMatch` conditional PutObject — the S3 conditional write
+Uses aioboto3 (async) with `IfMatch` conditional PutObject. This is the S3 conditional write
 feature [released in August 2024](https://aws.amazon.com/about-aws/whats-new/2024/08/amazon-s3-conditional-writes/).
 The etag is the S3 `ETag` response header.
 
@@ -479,7 +464,7 @@ storage = GCSStorage(
 ```
 
 Uses `if_generation_match` for conditional writes. Generation 0 means "blob must not
-exist yet" — used for the first write. The etag is the GCS object generation number
+exist yet", used for the first write. The etag is the GCS object generation number
 (stringified integer).
 
 Since `google-cloud-storage` is synchronous, all GCS operations are wrapped in
@@ -512,10 +497,8 @@ class MyStorage:
         ...
 ```
 
-No base class, no registration — structural subtyping (duck typing) is sufficient.
+No base class, no registration. Structural subtyping (duck typing) is sufficient.
 Pass your adapter directly to `DirectQueue` or `BrokerQueue`.
-
----
 
 ## API reference
 
@@ -532,26 +515,26 @@ job: Job = await q.enqueue(
     priority: int = 0,      # lower = processed first
 )
 
-# Dequeue — marks jobs IN_PROGRESS, returns empty list if none available
+# Dequeue: marks jobs IN_PROGRESS, returns empty list if none available
 jobs: list[Job] = await q.dequeue(
     entrypoint: str | None = None,   # None = any entrypoint
     *,
     batch_size: int = 1,
 )
 
-# Acknowledge — remove a completed job
+# Acknowledge: remove a completed job
 await q.ack(job_id: str)
 
-# Negative-acknowledge — return a job to QUEUED for retry
+# Negative-acknowledge: return a job to QUEUED for retry
 await q.nack(job_id: str)
 
-# Heartbeat — refresh the IN_PROGRESS timestamp
+# Heartbeat: refresh the IN_PROGRESS timestamp
 await q.heartbeat(job_id: str)
 
 # Read-only snapshot (no CAS, no locking)
 state: QueueState = await q.read_state()
 
-# DirectQueue only — explicit stale sweep
+# DirectQueue only: explicit stale sweep
 requeued: int = await q.requeue_stale(timeout: timedelta)
 ```
 
@@ -573,36 +556,34 @@ The task is cancelled when the context exits. If `heartbeat` raises `JQueueError
 ### `Job`
 
 ```python
-job.id           # str — stable UUID assigned at enqueue time
+job.id           # str, stable UUID assigned at enqueue time
 job.entrypoint   # str
 job.payload      # bytes
 job.status       # JobStatus.QUEUED | IN_PROGRESS | DEAD
-job.priority     # int — lower = higher priority
+job.priority     # int, lower = higher priority
 job.created_at   # datetime (UTC)
 job.heartbeat_at # datetime | None
 ```
 
-`Job` is a frozen Pydantic model — all fields are immutable.
+`Job` is a frozen Pydantic model. All fields are immutable.
 
 ### `QueueState`
 
 ```python
 state.jobs      # tuple[Job, ...]
-state.version   # int — incremented on every write
+state.version   # int, incremented on every write
 
 state.queued_jobs(entrypoint=None)  # sorted by (priority, created_at)
 state.in_progress_jobs()
 state.find(job_id)                  # Job | None
 ```
 
----
-
 ## Error handling
 
 ```python
 from jqueue import (
-    JQueueError,       # base class — catches all jqueue errors
-    CASConflictError,  # CAS write rejected (etag mismatch) — usually retried internally
+    JQueueError,       # base class, catches all jqueue errors
+    CASConflictError,  # CAS write rejected (etag mismatch), usually retried internally
     JobNotFoundError,  # job_id not in current state; has .job_id attribute
     StorageError,      # I/O failure from the storage backend; has .cause attribute
 )
@@ -618,10 +599,8 @@ present in the current queue state (e.g., it was already acked by another worker
 try:
     await q.ack(job.id)
 except JobNotFoundError:
-    pass  # already removed — safe to ignore
+    pass  # already removed, safe to ignore
 ```
-
----
 
 ## Architecture
 
@@ -640,7 +619,7 @@ jqueue follows the **Ports & Adapters** (hexagonal) pattern:
 │  ├── codec.py          QueueState ↔ JSON bytes               │
 │  ├── direct.py         DirectQueue (one CAS per op)          │
 │  ├── group_commit.py   GroupCommitLoop (batched writes)      │
-│  ├── broker.py         BrokerQueue (context manager façade)  │
+│  ├── broker.py         BrokerQueue (context manager facade)  │
 │  └── heartbeat.py      HeartbeatManager                      │
 ├─────────────────────────────────────────────────────────────┤
 │  adapters/storage/                                           │
@@ -651,27 +630,24 @@ jqueue follows the **Ports & Adapters** (hexagonal) pattern:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Key design properties:**
+Design notes:
 
-- **Pure domain layer.** `Job` and `QueueState` are frozen Pydantic models with no
-  I/O dependencies. All mutations return new instances — no side effects.
-- **Protocol-based port.** `ObjectStoragePort` is a `runtime_checkable` Protocol. Any
-  two-method object satisfies it without inheritance.
-- **Codec separation.** `codec.encode` / `codec.decode` are the only place that knows
-  about the JSON wire format, keeping it easy to evolve.
-- **Zero shared state between writers.** Each CAS cycle reads a fresh snapshot.
-  There are no in-process caches that can go stale.
-
----
+- `Job` and `QueueState` are frozen Pydantic models with no I/O dependencies. All
+  mutations return new instances; no side effects.
+- `ObjectStoragePort` is a `runtime_checkable` Protocol. Any two-method object satisfies
+  it without inheritance.
+- `codec.encode` / `codec.decode` are the only place that knows about the JSON wire
+  format, keeping it easy to evolve.
+- Each CAS cycle reads a fresh snapshot.   There are no in-process caches that can go stale.
 
 ## Limitations and trade-offs
 
 | Concern | Detail |
 |---|---|
-| **Throughput ceiling** | S3 conditional writes have ~50–200 ms round-trip latency. `DirectQueue` tops out around 5–20 ops/s; `BrokerQueue` can reach ~50–100 ops/s by batching. |
+| **Throughput ceiling** | S3 conditional writes have ~50-200 ms round-trip latency. `DirectQueue` tops out around 5-20 ops/s; `BrokerQueue` can reach ~50-100 ops/s by batching. |
 | **Single-file bottleneck** | All operations contend on one object. This is fine for moderate workloads; for very high throughput, partition into multiple queues (one file per entrypoint). |
 | **Queue size** | The entire state is read and written on every operation. Keep queue depths reasonable (hundreds to low thousands of jobs). |
 | **No push / subscribe** | Workers must poll `dequeue`. There's no server-push mechanism. |
-| **POSIX only (filesystem)** | `LocalFileSystemStorage` uses `fcntl.flock` — Linux and macOS only, not NFS. |
+| **POSIX only (filesystem)** | `LocalFileSystemStorage` uses `fcntl.flock`. Linux and macOS only, not NFS. |
 | **S3 conditional writes** | Requires the August 2024 S3 conditional write feature. Verify your S3-compatible backend supports `IfMatch` on PutObject before using `S3Storage`. |
 | **Not a database** | If you need complex queries, scheduling, or priority queues with millions of jobs, a purpose-built system (Postgres, Redis) is a better fit. |
