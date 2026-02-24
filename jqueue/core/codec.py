@@ -24,6 +24,7 @@ Wire format (produced by model_dump_json):
   ]
 }
 """
+
 from __future__ import annotations
 
 from jqueue.domain.models import QueueState

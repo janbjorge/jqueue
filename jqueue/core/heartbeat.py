@@ -22,6 +22,7 @@ HeartbeatManager is typed against the structural Protocol _HasHeartbeat, so
 it works with BrokerQueue, DirectQueue, and GroupCommitLoop without any
 shared base class.
 """
+
 from __future__ import annotations
 
 import asyncio

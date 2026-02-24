@@ -9,6 +9,7 @@ from jqueue.domain.errors import CASConflictError, StorageError
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _AsyncCM:
     """Minimal async context manager wrapping a return value."""
 
@@ -40,6 +41,7 @@ def _client_error(code: str) -> Exception:
 # ---------------------------------------------------------------------------
 # read()
 # ---------------------------------------------------------------------------
+
 
 async def test_read_returns_content_and_etag():
     storage, s3 = _make_storage()
@@ -92,6 +94,7 @@ async def test_read_generic_exception_raises_storage_error():
 # ---------------------------------------------------------------------------
 # write()
 # ---------------------------------------------------------------------------
+
 
 async def test_write_without_if_match_no_condition_header():
     storage, s3 = _make_storage()
@@ -147,6 +150,7 @@ async def test_write_other_error_raises_storage_error():
 # _client_kwargs()
 # ---------------------------------------------------------------------------
 
+
 def test_client_kwargs_empty_by_default():
     storage = S3Storage(bucket="b", key="k")
     assert storage._client_kwargs() == {}
@@ -177,6 +181,7 @@ def test_client_kwargs_with_both():
 # ---------------------------------------------------------------------------
 # _s3_error_code()
 # ---------------------------------------------------------------------------
+
 
 def test_s3_error_code_extracts_code():
     exc = Exception()

@@ -10,6 +10,7 @@ from jqueue.domain.errors import JQueueError
 # Minimal queue stub
 # ---------------------------------------------------------------------------
 
+
 class _MockQueue:
     def __init__(self, side_effect: Exception | None = None) -> None:
         self.calls: list[str] = []
@@ -24,6 +25,7 @@ class _MockQueue:
 # ---------------------------------------------------------------------------
 # Basic operation
 # ---------------------------------------------------------------------------
+
 
 async def test_heartbeat_sends_at_interval() -> None:
     queue = _MockQueue()
@@ -62,6 +64,7 @@ async def test_heartbeat_stops_after_context_exit() -> None:
 # Task lifecycle
 # ---------------------------------------------------------------------------
 
+
 async def test_task_is_running_inside_context() -> None:
     queue = _MockQueue()
     hb = HeartbeatManager(queue=queue, job_id="j", interval=timedelta(seconds=100))
@@ -91,6 +94,7 @@ async def test_exception_in_body_still_cancels_task() -> None:
 # JQueueError handling
 # ---------------------------------------------------------------------------
 
+
 async def test_jqueue_error_stops_heartbeat_silently() -> None:
     """_beat() exits without raising when JQueueError is raised by queue.heartbeat."""
     queue = _MockQueue(side_effect=JQueueError("job was acked"))
@@ -117,6 +121,7 @@ async def test_non_jqueue_error_propagates_through_exit() -> None:
 # ---------------------------------------------------------------------------
 # Default interval
 # ---------------------------------------------------------------------------
+
 
 def test_default_interval_is_60_seconds() -> None:
     queue = _MockQueue()

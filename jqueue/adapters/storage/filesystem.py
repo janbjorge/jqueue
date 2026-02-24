@@ -22,6 +22,7 @@ if_match. The write is performed atomically within the same lock scope.
 
 POSIX-only (Linux, macOS). Not compatible with NFS or distributed filesystems.
 """
+
 from __future__ import annotations
 
 import asyncio

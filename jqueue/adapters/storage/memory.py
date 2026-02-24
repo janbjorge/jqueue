@@ -11,6 +11,7 @@ on every successful write.
 Zero external dependencies. Safe for multiple concurrent coroutines in a
 single event loop. NOT safe across processes or threads.
 """
+
 from __future__ import annotations
 
 import asyncio

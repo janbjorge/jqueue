@@ -23,6 +23,7 @@ Per-operation error isolation
 If one mutation in a batch raises (e.g., JobNotFoundError), that future gets
 the exception but the other mutations in the batch still commit normally.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -168,9 +169,7 @@ class GroupCommitLoop:
             job = state.find(job_id)
             if job is None:
                 raise JobNotFoundError(job_id)
-            return state.with_job_replaced(
-                job.with_heartbeat(datetime.now(UTC))
-            )
+            return state.with_job_replaced(job.with_heartbeat(datetime.now(UTC)))
 
         await self._submit(_fn)
 

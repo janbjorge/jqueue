@@ -18,6 +18,7 @@ read()
   - If the object does not exist, returns (b"", None)
     (the caller treats this as an empty queue)
 """
+
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable

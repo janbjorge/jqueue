@@ -15,6 +15,7 @@ Operations retry up to `max_retries` times (default 10) on CASConflictError
 with linear back-off (10ms × attempt). Raises CASConflictError if all retries
 are exhausted.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -111,9 +112,7 @@ class DirectQueue:
             job = state.find(job_id)
             if job is None:
                 raise JobNotFoundError(job_id)
-            return state.with_job_replaced(
-                job.with_heartbeat(datetime.now(UTC))
-            )
+            return state.with_job_replaced(job.with_heartbeat(datetime.now(UTC)))
 
         await self._mutate(_fn)
 

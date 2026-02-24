@@ -6,6 +6,7 @@ JQueueError
 ├── JobNotFoundError   — job_id not present in current QueueState
 └── StorageError       — underlying I/O failure (wraps original exception)
 """
+
 from __future__ import annotations
 
 

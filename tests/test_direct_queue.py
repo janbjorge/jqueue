@@ -13,6 +13,7 @@ from jqueue.domain.models import JobStatus
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def storage() -> InMemoryStorage:
     return InMemoryStorage()
@@ -26,6 +27,7 @@ def queue(storage: InMemoryStorage) -> DirectQueue:
 # ---------------------------------------------------------------------------
 # enqueue
 # ---------------------------------------------------------------------------
+
 
 async def test_enqueue_returns_job(queue: DirectQueue) -> None:
     job = await queue.enqueue("send_email", b"payload")
@@ -56,6 +58,7 @@ async def test_enqueue_increments_version(queue: DirectQueue) -> None:
 # ---------------------------------------------------------------------------
 # dequeue
 # ---------------------------------------------------------------------------
+
 
 async def test_dequeue_empty_queue_returns_empty_list(queue: DirectQueue) -> None:
     result = await queue.dequeue("task")
@@ -130,6 +133,7 @@ async def test_dequeue_respects_priority_order(queue: DirectQueue) -> None:
 # ack
 # ---------------------------------------------------------------------------
 
+
 async def test_ack_removes_job(queue: DirectQueue) -> None:
     job = await queue.enqueue("task", b"data")
     [dequeued] = await queue.dequeue("task")
@@ -146,6 +150,7 @@ async def test_ack_missing_job_raises(queue: DirectQueue) -> None:
 # ---------------------------------------------------------------------------
 # nack
 # ---------------------------------------------------------------------------
+
 
 async def test_nack_returns_job_to_queued(queue: DirectQueue) -> None:
     await queue.enqueue("task", b"data")
@@ -166,6 +171,7 @@ async def test_nack_missing_job_raises(queue: DirectQueue) -> None:
 # ---------------------------------------------------------------------------
 # heartbeat
 # ---------------------------------------------------------------------------
+
 
 async def test_heartbeat_updates_timestamp(queue: DirectQueue) -> None:
     await queue.enqueue("task", b"data")
@@ -188,6 +194,7 @@ async def test_heartbeat_missing_job_raises(queue: DirectQueue) -> None:
 # ---------------------------------------------------------------------------
 # requeue_stale
 # ---------------------------------------------------------------------------
+
 
 async def test_requeue_stale_no_stale_jobs_returns_zero(queue: DirectQueue) -> None:
     await queue.enqueue("task", b"data")
@@ -218,6 +225,7 @@ async def test_requeue_stale_returns_count(queue: DirectQueue) -> None:
 # read_state
 # ---------------------------------------------------------------------------
 
+
 async def test_read_state_empty(queue: DirectQueue) -> None:
     state = await queue.read_state()
     assert state.jobs == ()
@@ -233,6 +241,7 @@ async def test_read_state_reflects_mutations(queue: DirectQueue) -> None:
 # ---------------------------------------------------------------------------
 # CAS retry behaviour
 # ---------------------------------------------------------------------------
+
 
 async def test_cas_retry_on_conflict_eventually_succeeds() -> None:
     real_storage = InMemoryStorage()

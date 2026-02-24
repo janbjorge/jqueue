@@ -23,6 +23,7 @@ in-flight (typically 50–300 ms against real object storage), every enqueue
 and dequeue call that arrives is buffered and committed in the *next* write —
 collapsing N concurrent writes down to O(1) storage round-trips.
 """
+
 from __future__ import annotations
 
 import dataclasses

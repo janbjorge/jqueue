@@ -11,6 +11,7 @@ from jqueue.domain.models import JobStatus
 # Lifecycle
 # ---------------------------------------------------------------------------
 
+
 async def test_context_manager_starts_and_stops_loop() -> None:
     storage = InMemoryStorage()
     async with BrokerQueue(storage) as q:
@@ -28,6 +29,7 @@ async def test_can_use_as_async_context_manager() -> None:
 # enqueue
 # ---------------------------------------------------------------------------
 
+
 async def test_enqueue_returns_job() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
         job = await q.enqueue("send_email", b'{"to": "user@example.com"}')
@@ -44,6 +46,7 @@ async def test_enqueue_with_priority() -> None:
 # ---------------------------------------------------------------------------
 # dequeue
 # ---------------------------------------------------------------------------
+
 
 async def test_dequeue_returns_in_progress() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
@@ -83,6 +86,7 @@ async def test_dequeue_filters_by_entrypoint() -> None:
 # ack
 # ---------------------------------------------------------------------------
 
+
 async def test_ack_removes_job() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
         job = await q.enqueue("task", b"data")
@@ -95,6 +99,7 @@ async def test_ack_removes_job() -> None:
 # ---------------------------------------------------------------------------
 # nack
 # ---------------------------------------------------------------------------
+
 
 async def test_nack_returns_to_queued() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
@@ -117,6 +122,7 @@ async def test_nack_missing_job_raises() -> None:
 # ---------------------------------------------------------------------------
 # heartbeat
 # ---------------------------------------------------------------------------
+
 
 async def test_heartbeat_updates_timestamp() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
@@ -141,6 +147,7 @@ async def test_heartbeat_missing_job_raises() -> None:
 # read_state
 # ---------------------------------------------------------------------------
 
+
 async def test_read_state_empty() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
         state = await q.read_state()
@@ -157,6 +164,7 @@ async def test_read_state_reflects_enqueue() -> None:
 # ---------------------------------------------------------------------------
 # End-to-end workflow
 # ---------------------------------------------------------------------------
+
 
 async def test_full_workflow() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:

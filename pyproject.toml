@@ -19,7 +19,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "aioboto3>=13.0",
     "google-cloud-storage>=2.0",
-    "ruff>=0.15.2",
+    "ruff",
     "mypy",
 ]
 

@@ -56,6 +56,7 @@ Follows the Ports & Adapters pattern:
   core/     — business logic (DirectQueue, BrokerQueue, GroupCommitLoop)
   adapters/ — concrete storage implementations
 """
+
 from __future__ import annotations
 
 from jqueue.adapters.storage.filesystem import LocalFileSystemStorage
