@@ -26,6 +26,7 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+.dmypy.json
 
 # ruff
 .ruff_cache/
