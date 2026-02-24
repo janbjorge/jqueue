@@ -9,10 +9,12 @@ for distributed workloads.
 
 Etag strategy
 -------------
-The etag is the file's mtime in nanoseconds (st_mtime_ns), stringified.
-A file with st_size == 0 (or absent) is treated as non-existent; its etag
-is None. The jqueue codec always produces non-empty JSON, so a 0-byte file
-only occurs transiently before the first write completes.
+The etag is a SHA-256 hex digest of the file contents. This is stable,
+deterministic, and always changes when content changes — unlike mtime which
+can be identical across rapid successive writes on fast machines.
+A file that is absent or empty is treated as non-existent; its etag is None.
+The jqueue codec always produces non-empty JSON, so a 0-byte file only occurs
+transiently before the first write completes.
 
 CAS semantics
 -------------
@@ -28,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import fcntl
+import hashlib
 import os
 from pathlib import Path
 
@@ -65,6 +68,10 @@ class LocalFileSystemStorage:
     # Synchronous implementations (executed in a thread-pool worker)      #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _etag(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
     def _sync_read(self) -> tuple[bytes, str | None]:
         if not self.path.exists():
             return b"", None
@@ -72,10 +79,9 @@ class LocalFileSystemStorage:
             fcntl.flock(fh, fcntl.LOCK_SH)
             try:
                 content = fh.read()
-                stat = os.fstat(fh.fileno())
             finally:
                 fcntl.flock(fh, fcntl.LOCK_UN)
-        etag: str | None = str(stat.st_mtime_ns) if content else None
+        etag: str | None = self._etag(content) if content else None
         return content, etag
 
     def _sync_write(self, content: bytes, if_match: str | None) -> str:
@@ -84,8 +90,8 @@ class LocalFileSystemStorage:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
 
-            stat = os.fstat(fd)
-            real_etag: str | None = str(stat.st_mtime_ns) if stat.st_size > 0 else None
+            existing = os.read(fd, os.fstat(fd).st_size)
+            real_etag: str | None = self._etag(existing) if existing else None
 
             if real_etag != if_match:
                 raise CASConflictError(
@@ -99,4 +105,4 @@ class LocalFileSystemStorage:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-        return str(os.stat(str(self.path)).st_mtime_ns)
+        return self._etag(content)
