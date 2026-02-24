@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
 
-import typer
+import typer  # type: ignore[import-not-found]
 
 # Import jqueue components from the local package
 # Add parent directory to path to import jqueue
@@ -41,9 +41,9 @@ from jqueue.adapters.storage.filesystem import LocalFileSystemStorage
 from jqueue.adapters.storage.memory import InMemoryStorage
 
 try:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
+    from rich.console import Console  # type: ignore[import-not-found]
+    from rich.panel import Panel  # type: ignore[import-not-found]
+    from rich.table import Table  # type: ignore[import-not-found]
 
     RICH_AVAILABLE = True
 except ImportError:
@@ -549,7 +549,7 @@ def format_results_rich(results: list[BenchmarkResult]) -> None:
     console = Console()
 
     # Group results by adapter
-    adapters = {}
+    adapters: dict[str, list[BenchmarkResult]] = {}
     for result in results:
         if result.adapter_name not in adapters:
             adapters[result.adapter_name] = []
@@ -602,7 +602,7 @@ def format_results_plain(results: list[BenchmarkResult]) -> None:
     results : list of benchmark results
     """
     # Group results by adapter
-    adapters = {}
+    adapters: dict[str, list[BenchmarkResult]] = {}
     for result in results:
         if result.adapter_name not in adapters:
             adapters[result.adapter_name] = []
@@ -616,7 +616,8 @@ def format_results_plain(results: list[BenchmarkResult]) -> None:
         print(f"\nAdapter: {adapter_name}")
         print("-" * 80)
         print(
-            f"{'Operation':<15} | {'Ops/sec':>9} | {'P50':>8} | {'P95':>8} | {'P99':>8} | {'Max':>8}"
+            f"{'Operation':<15} | {'Ops/sec':>9} | {'P50':>8} | "
+            f"{'P95':>8} | {'P99':>8} | {'Max':>8}"
         )
         print("-" * 80)
 
@@ -654,7 +655,7 @@ def format_results(results: list[BenchmarkResult]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.command()
+@app.command()  # type: ignore[untyped-decorator]
 def main(
     operations: int = typer.Option(
         1000,

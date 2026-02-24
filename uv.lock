@@ -623,7 +623,6 @@ wheels = [
 
 [[package]]
 name = "jqueue"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -657,7 +656,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "ruff", marker = "extra == 'dev'" },
 ]
-provides-extras = ["s3", "gcs", "dev"]
+provides-extras = ["dev", "gcs", "s3"]
 
 [[package]]
 name = "librt"
