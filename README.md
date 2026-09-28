@@ -413,8 +413,8 @@ storage = LocalFileSystemStorage("/var/lib/myapp/queue.json")
 # accepts str or pathlib.Path; parent directories are created automatically
 ```
 
-Uses `fcntl.flock` for POSIX exclusive locking. The etag is a SHA-256 hex digest of
-the file content.
+Uses `fcntl.flock` on a sidecar `<path>.lock` for POSIX exclusive locking, and writes
+via temp file + atomic rename. The etag is a SHA-256 hex digest of the file content.
 **POSIX-only** (Linux, macOS). Not safe across machines or on NFS.
 
 ### S3Storage
