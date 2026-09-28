@@ -59,6 +59,20 @@ def test_claim_respects_priority_batch_size_and_entrypoint() -> None:
     assert [j.id for j in q.state.queued_jobs()] == [other.id, low.id]
 
 
+@pytest.mark.parametrize("batch_size", [0, -1, -5])
+def test_claim_rejects_non_positive_batch_size(batch_size: int) -> None:
+    q = _queries(*(Job.new("task", b"x") for _ in range(5)))
+    before = q.state
+    with pytest.raises(ValueError, match="batch_size must be >= 1"):
+        q.claim(None, batch_size, NOW)
+    assert q.state is before
+
+
+def test_claim_batch_size_one_claims_one() -> None:
+    q = _queries(Job.new("task", b"a"), Job.new("task", b"b"))
+    assert len(q.claim(None, 1, NOW)) == 1
+
+
 # ---------------------------------------------------------------------------
 # remove / release / touch
 # ---------------------------------------------------------------------------

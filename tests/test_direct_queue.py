@@ -319,7 +319,6 @@ async def test_empty_dequeue_does_not_write() -> None:
     _, etag_before = await storage.read()
 
     assert await queue.dequeue("other") == []
-    assert await queue.dequeue("task", batch_size=0) == []
 
     _, etag_after = await storage.read()
     assert storage.writes == 1
@@ -468,3 +467,30 @@ async def test_cancelled_dequeue_with_failed_claim_leaves_state_alone() -> None:
     state = await queue.read_state()
     assert state.in_progress_jobs() == ()
     assert state.find(job.id) is not None
+
+
+# ---------------------------------------------------------------------------
+# batch_size validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("batch_size", [0, -1, -100])
+async def test_dequeue_rejects_non_positive_batch_size(batch_size: int) -> None:
+    storage = AsyncMock(wraps=InMemoryStorage())
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"a")
+    await queue.enqueue("task", b"b")
+    storage.reset_mock()
+
+    with pytest.raises(ValueError, match="batch_size must be >= 1"):
+        await queue.dequeue("task", batch_size=batch_size)
+
+    storage.read.assert_not_called()
+    storage.write.assert_not_called()
+    assert (await queue.read_state()).in_progress_jobs() == ()
+
+
+async def test_dequeue_batch_size_one_is_accepted(queue: DirectQueue) -> None:
+    await queue.enqueue("task", b"a")
+    await queue.enqueue("task", b"b")
+    assert len(await queue.dequeue("task", batch_size=1)) == 1

@@ -218,3 +218,12 @@ async def test_enqueue_dequeue_nack_requeue_workflow() -> None:
         [retry] = await q.dequeue("task")
         assert retry.id == job.id
         assert retry.status == JobStatus.IN_PROGRESS
+
+
+async def test_dequeue_rejects_negative_batch_size() -> None:
+    async with BrokerQueue(InMemoryStorage()) as q:
+        for _ in range(5):
+            await q.enqueue("task", b"x")
+        with pytest.raises(ValueError):
+            await q.dequeue("task", batch_size=-1)
+        assert (await q.read_state()).in_progress_jobs() == ()
