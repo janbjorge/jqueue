@@ -126,8 +126,5 @@ class GCSStorage:
         except gapi_exc.PreconditionFailed as exc:
             raise CASConflictError("GCS generation mismatch") from exc
 
-        # upload_from_string() already sets blob properties from the upload
-        # response, so blob.generation is the generation *we* just wrote.
-        # Re-fetching (blob.reload()) would cost a round trip and could
-        # return a newer generation written by someone else in between.
+        # upload_from_string() already set blob.generation from the response.
         return str(blob.generation)

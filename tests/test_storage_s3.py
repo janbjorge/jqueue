@@ -264,8 +264,7 @@ class _FakeS3:
 
     async def get_object(self, **kwargs: object) -> dict[str, object]:
         snapshot, etag = self.body, self.etag
-        # Yield after snapshotting so concurrent callers both observe the
-        # same (missing) object before either writes.
+        # Yield after snapshotting so concurrent readers see the same state.
         await asyncio.sleep(0)
         if snapshot is None:
             raise _client_error("NoSuchKey")
@@ -294,7 +293,6 @@ async def test_racing_first_writes_second_gets_cas_conflict():
     fake = _FakeS3()
     a, b = _fake_s3_storage(fake), _fake_s3_storage(fake)
 
-    # Both initialisers observe "no object yet".
     assert await a.read() == (b"", None)
     assert await b.read() == (b"", None)
 
@@ -305,7 +303,6 @@ async def test_racing_first_writes_second_gets_cas_conflict():
 
 
 async def test_racing_first_enqueues_both_survive():
-    """Two DirectQueues bootstrapping the same key must not lose a job."""
     fake = _FakeS3()
     q1 = DirectQueue(_fake_s3_storage(fake))
     q2 = DirectQueue(_fake_s3_storage(fake))

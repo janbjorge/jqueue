@@ -15,14 +15,7 @@ from jqueue.domain.models import Job, JobStatus, QueueState
 
 
 def check_batch_size(batch_size: int) -> None:
-    """
-    Validate a dequeue ``batch_size``.
-
-    Raises
-    ------
-    ValueError
-        If ``batch_size`` is less than 1.
-    """
+    """Raise ValueError if ``batch_size`` < 1."""
     if batch_size < 1:
         raise ValueError(f"batch_size must be >= 1, got {batch_size}")
 
@@ -158,8 +151,7 @@ class StateQueries:
         JobNotFoundError
             If no job with ``job_id`` exists.
         JobNotInProgressError
-            If the job is not IN_PROGRESS (e.g. it went stale and was
-            re-queued), so the caller no longer holds it.
+            If the job is not IN_PROGRESS.
         """
         job = self._require(job_id)
         if job.status != JobStatus.IN_PROGRESS:
@@ -170,23 +162,10 @@ class StateQueries:
 
     def release_claims(self, claimed: list[Job]) -> list[Job]:
         """
-        Return jobs from an abandoned claim to QUEUED.
+        Return jobs of an abandoned claim to QUEUED; returns those released.
 
-        Used when the caller that claimed ``claimed`` went away (was
-        cancelled) before receiving them. A job is released only if it is
-        still exactly as that claim left it — IN_PROGRESS with the claim's
-        heartbeat — so a job that has since been heartbeated, acked, or
-        re-claimed by another worker is left alone. Never raises.
-
-        Parameters
-        ----------
-        claimed : list[Job]
-            The jobs as returned by the abandoned ``claim``.
-
-        Returns
-        -------
-        list[Job]
-            The jobs that were released.
+        Skips any job no longer IN_PROGRESS with the claim's heartbeat
+        (heartbeated, acked or re-claimed since). Never raises.
         """
         state = self.state
         released: list[Job] = []
