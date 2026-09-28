@@ -14,6 +14,19 @@ from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError
 from jqueue.domain.models import Job, JobStatus, QueueState
 
 
+def check_batch_size(batch_size: int) -> None:
+    """
+    Validate a dequeue ``batch_size``.
+
+    Raises
+    ------
+    ValueError
+        If ``batch_size`` is less than 1.
+    """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+
+
 @dataclasses.dataclass
 class StateQueries:
     """
@@ -69,7 +82,7 @@ class StateQueries:
         entrypoint : str | None
             Only claim jobs for this entrypoint; None claims from any.
         batch_size : int
-            Maximum number of jobs to claim.
+            Maximum number of jobs to claim; must be >= 1.
         now : datetime
             Heartbeat timestamp for the claimed jobs.
 
@@ -77,7 +90,13 @@ class StateQueries:
         -------
         list[Job]
             The claimed jobs, in priority order. Empty if none are available.
+
+        Raises
+        ------
+        ValueError
+            If ``batch_size`` is less than 1.
         """
+        check_batch_size(batch_size)
         state = self.state
         claimed: list[Job] = []
         for job in state.queued_jobs(entrypoint)[:batch_size]:

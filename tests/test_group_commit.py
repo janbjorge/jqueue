@@ -506,3 +506,29 @@ async def test_cancelled_dequeue_does_not_release_job_heartbeated_since() -> Non
         assert stored.status == JobStatus.IN_PROGRESS
     finally:
         await gcl.stop()
+
+
+# ---------------------------------------------------------------------------
+# batch_size validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+async def test_dequeue_rejects_non_positive_batch_size(
+    loop: GroupCommitLoop, batch_size: int
+) -> None:
+    await loop.enqueue("task", b"a")
+    await loop.enqueue("task", b"b")
+
+    with pytest.raises(ValueError, match="batch_size must be >= 1"):
+        await loop.dequeue("task", batch_size=batch_size)
+
+    assert loop._pending == []
+    assert (await loop.read_state()).in_progress_jobs() == ()
+
+
+async def test_dequeue_batch_size_larger_than_queue_is_accepted(
+    loop: GroupCommitLoop,
+) -> None:
+    await loop.enqueue("task", b"a")
+    assert len(await loop.dequeue("task", batch_size=50)) == 1

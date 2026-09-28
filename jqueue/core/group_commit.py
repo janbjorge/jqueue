@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from jqueue.core import codec
-from jqueue.core.queries import StateQueries
+from jqueue.core.queries import StateQueries, check_batch_size
 from jqueue.domain.errors import CASConflictError, JQueueError
 from jqueue.domain.models import Job, QueueState
 from jqueue.ports.storage import ObjectStoragePort
@@ -127,7 +127,12 @@ class GroupCommitLoop:
         *,
         batch_size: int = 1,
     ) -> list[Job]:
-        """Claim up to batch_size QUEUED jobs and mark them IN_PROGRESS."""
+        """
+        Claim up to batch_size QUEUED jobs and mark them IN_PROGRESS.
+
+        Raises ValueError if ``batch_size`` is less than 1.
+        """
+        check_batch_size(batch_size)
         return await self._submit(
             lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC)),
             undo=lambda q, claimed: q.release_claims(claimed),

@@ -25,7 +25,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from jqueue.core import codec
-from jqueue.core.queries import StateQueries
+from jqueue.core.queries import StateQueries, check_batch_size
 from jqueue.domain.errors import CASConflictError
 from jqueue.domain.models import Job, QueueState
 from jqueue.ports.storage import ObjectStoragePort
@@ -82,7 +82,10 @@ class DirectQueue:
         If the caller is cancelled while the claim is in flight, the claim is
         allowed to finish and its jobs are then returned to QUEUED in the
         background, so they do not sit IN_PROGRESS with no worker.
+
+        Raises ValueError if ``batch_size`` is less than 1.
         """
+        check_batch_size(batch_size)
         claim = asyncio.ensure_future(
             self._transaction(
                 lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
