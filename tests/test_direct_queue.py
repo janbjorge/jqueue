@@ -296,3 +296,88 @@ async def test_cas_exhausted_raises_conflict() -> None:
     q = DirectQueue(storage=real_storage, max_retries=2)
     with pytest.raises(CASConflictError):
         await q.enqueue("task", b"data")
+
+
+# ---------------------------------------------------------------------------
+# No-op operations skip the write
+# ---------------------------------------------------------------------------
+
+
+class _CountingStorage(InMemoryStorage):
+    """InMemoryStorage that counts successful writes."""
+
+    writes: int = 0
+
+    async def write(self, content: bytes, if_match: str | None = None) -> str:
+        etag = await super().write(content, if_match)
+        self.writes += 1
+        return etag
+
+
+async def test_empty_dequeue_does_not_write() -> None:
+    storage = _CountingStorage()
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"data")
+    assert storage.writes == 1
+    _, etag_before = await storage.read()
+
+    assert await queue.dequeue("other") == []
+    assert await queue.dequeue("task", batch_size=0) == []
+
+    _, etag_after = await storage.read()
+    assert storage.writes == 1
+    assert etag_after == etag_before
+
+
+async def test_dequeue_on_missing_object_does_not_create_it() -> None:
+    storage = _CountingStorage()
+    queue = DirectQueue(storage)
+    assert await queue.dequeue() == []
+    assert storage.writes == 0
+    assert await storage.read() == (b"", None)
+
+
+async def test_requeue_stale_with_nothing_stale_does_not_write() -> None:
+    storage = _CountingStorage()
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"data")
+    await queue.dequeue("task")
+    writes = storage.writes
+
+    assert await queue.requeue_stale(timedelta(hours=1)) == 0
+    assert storage.writes == writes
+
+
+async def test_failed_op_does_not_write() -> None:
+    storage = _CountingStorage()
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"data")
+    with pytest.raises(JobNotFoundError):
+        await queue.ack("nonexistent-id")
+    assert storage.writes == 1
+
+
+async def test_state_changing_ops_still_write() -> None:
+    storage = _CountingStorage()
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"data")
+    [job] = await queue.dequeue("task")
+    await queue.heartbeat(job.id)
+    await queue.nack(job.id)
+    await queue.dequeue("task")
+    assert await queue.requeue_stale(timedelta(seconds=-1)) == 1
+    await queue.ack(job.id)
+    assert storage.writes == 7
+    assert (await queue.read_state()).jobs == ()
+
+
+async def test_empty_dequeue_does_not_conflict_with_concurrent_writer() -> None:
+    """A no-op read cannot cause a CAS conflict for a real writer."""
+    storage = AsyncMock(wraps=InMemoryStorage())
+    queue = DirectQueue(storage)
+    await queue.enqueue("task", b"data")
+    await queue.dequeue("task")
+    storage.write.reset_mock()
+
+    assert await queue.dequeue("task") == []
+    storage.write.assert_not_called()
