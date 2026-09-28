@@ -13,14 +13,24 @@ The etag is a SHA-256 hex digest of the file contents. This is stable,
 deterministic, and always changes when content changes — unlike mtime which
 can be identical across rapid successive writes on fast machines.
 A file that is absent or empty is treated as non-existent; its etag is None.
-The jqueue codec always produces non-empty JSON, so a 0-byte file only occurs
-transiently before the first write completes.
+The jqueue codec always produces non-empty JSON.
 
 CAS semantics
 -------------
-write(content, if_match) acquires an exclusive flock, re-reads the current
-etag while holding the lock, and raises CASConflictError if it differs from
-if_match. The write is performed atomically within the same lock scope.
+write(content, if_match) acquires an exclusive flock on a sidecar lock file
+(``<path>.lock``), re-reads the current etag while holding the lock, and
+raises CASConflictError if it differs from if_match.
+
+Crash safety
+------------
+The new content is written to a temporary file in the same directory,
+fsynced, and moved over ``path`` with os.replace(); the directory is then
+fsynced. A crash or I/O error mid-write therefore leaves either the old or
+the new state on disk — never a truncated or partially written file. Readers
+never see a partial file either, so read() needs no lock.
+
+Writers from before this change locked ``path`` itself, not the sidecar
+lock file; do not run old and new writers against the same file at once.
 
 POSIX-only (Linux, macOS). Not compatible with NFS or distributed filesystems.
 """
@@ -28,10 +38,12 @@ POSIX-only (Linux, macOS). Not compatible with NFS or distributed filesystems.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import fcntl
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 from jqueue.domain.errors import CASConflictError
@@ -72,37 +84,57 @@ class LocalFileSystemStorage:
     def _etag(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
 
+    @property
+    def _lock_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".lock")
+
     def _sync_read(self) -> tuple[bytes, str | None]:
-        if not self.path.exists():
+        try:
+            content = self.path.read_bytes()
+        except FileNotFoundError:
             return b"", None
-        with open(self.path, "rb") as fh:
-            fcntl.flock(fh, fcntl.LOCK_SH)
-            try:
-                content = fh.read()
-            finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
         etag: str | None = self._etag(content) if content else None
         return content, etag
 
     def _sync_write(self, content: bytes, if_match: str | None) -> str:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+        directory = self.path.parent
+        directory.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(str(self._lock_path), os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-            existing = os.read(fd, os.fstat(fd).st_size)
-            real_etag: str | None = self._etag(existing) if existing else None
-
+            _, real_etag = self._sync_read()
             if real_etag != if_match:
                 raise CASConflictError(
                     f"ETag mismatch: expected {if_match!r}, got {real_etag!r}"
                 )
 
-            os.ftruncate(fd, 0)
-            os.lseek(fd, 0, os.SEEK_SET)
-            os.write(fd, content)
+            fd, tmp_name = tempfile.mkstemp(
+                dir=directory, prefix=f".{self.path.name}.", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(content)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.chmod(tmp_name, 0o644)
+                os.replace(tmp_name, self.path)
+            except BaseException:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp_name)
+                raise
+            _fsync_dir(directory)
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
         return self._etag(content)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Persist a rename by fsyncing its directory."""
+    dir_fd = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)

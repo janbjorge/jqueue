@@ -1,3 +1,10 @@
+import asyncio
+import os
+import resource
+import signal
+import stat
+from pathlib import Path
+
 import pytest
 
 from jqueue.adapters.storage.filesystem import LocalFileSystemStorage
@@ -98,3 +105,93 @@ async def test_path_accepts_string(tmp_path):
     await storage.write(b"data", if_match=None)
     content, _ = await storage.read()
     assert content == b"data"
+
+
+# ---------------------------------------------------------------------------
+# Crash safety: a failed write never leaves a partial file
+# ---------------------------------------------------------------------------
+
+
+def _leftovers(tmp_path: Path) -> list[str]:
+    return sorted(p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp"))
+
+
+async def test_short_write_leaves_previous_content_intact(tmp_path):
+    """Disk-full style failure mid-write must not truncate the state file."""
+    path = tmp_path / "state.json"
+    storage = LocalFileSystemStorage(path)
+    old = b'{"version": 1, "jobs": []}'
+    etag = await storage.write(old)
+    new = b"x" * 4096
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    previous = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (1024, hard))
+    try:
+        try:
+            await storage.write(new, if_match=etag)
+        except OSError:
+            pass
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        signal.signal(signal.SIGXFSZ, previous)
+
+    assert path.read_bytes() in (old, new)
+    assert _leftovers(tmp_path) == []
+
+
+async def test_failed_fsync_keeps_old_content_and_cleans_up(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    storage = LocalFileSystemStorage(path)
+    etag = await storage.write(b"old")
+
+    def boom(fd):
+        raise OSError("EIO")
+
+    monkeypatch.setattr(os, "fsync", boom)
+    with pytest.raises(OSError, match="EIO"):
+        await storage.write(b"new", if_match=etag)
+    monkeypatch.undo()
+
+    assert path.read_bytes() == b"old"
+    assert _leftovers(tmp_path) == []
+    content, still = await storage.read()
+    assert (content, still) == (b"old", etag)
+
+
+async def test_successful_write_leaves_no_temp_files(tmp_path):
+    path = tmp_path / "state.json"
+    storage = LocalFileSystemStorage(path)
+    etag = await storage.write(b"one")
+    await storage.write(b"two", if_match=etag)
+
+    assert path.read_bytes() == b"two"
+    assert _leftovers(tmp_path) == []
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+async def test_failed_cas_leaves_no_temp_files(tmp_path):
+    storage = LocalFileSystemStorage(tmp_path / "state.json")
+    await storage.write(b"one")
+    with pytest.raises(CASConflictError):
+        await storage.write(b"two", if_match="stale")
+    assert _leftovers(tmp_path) == []
+
+
+async def test_concurrent_writers_same_etag_exactly_one_wins(tmp_path):
+    """The sidecar lock still serialises writers: CAS stays exclusive."""
+    path = tmp_path / "state.json"
+    etag = await LocalFileSystemStorage(path).write(b"base")
+
+    async def attempt(i: int) -> bool:
+        try:
+            await LocalFileSystemStorage(path).write(f"w{i}".encode(), etag)
+        except CASConflictError:
+            return False
+        return True
+
+    results = await asyncio.gather(*(attempt(i) for i in range(16)))
+
+    assert results.count(True) == 1
+    winner = results.index(True)
+    assert path.read_bytes() == f"w{winner}".encode()
