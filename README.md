@@ -557,8 +557,10 @@ async with HeartbeatManager(
 ```
 
 Starts a background task that calls `queue.heartbeat(job_id)` every `interval` seconds.
-The task is cancelled when the context exits. If `heartbeat` raises `JQueueError`
-(e.g., the job was acked by another process), the task stops silently.
+The task is cancelled when the context exits. If `heartbeat` raises `JobNotFoundError`
+(e.g., the job was acked by another process), the task stops silently. Other
+`JQueueError`s (`StorageError`, `CASConflictError`) are treated as transient: that beat
+is skipped and the next one is attempted on schedule.
 
 ### `Job`
 
@@ -869,10 +871,11 @@ satisfying that signature works — `BrokerQueue`, `DirectQueue`, `GroupCommitLo
 test double.
 
 Inside the manager, a background task sleeps for `interval` seconds, then calls
-`heartbeat`. If the call raises `JQueueError` (which includes `JobNotFoundError` and
-`StorageError`), the task exits silently — the assumption is that the job has already
-been handled or the connection is lost and there's no useful action to take. On context
-exit, the task is cancelled.
+`heartbeat`. If the call raises `JobNotFoundError`, the task exits silently — the job
+has already been handled. Any other `JQueueError` (`StorageError`, `CASConflictError`)
+is treated as transient: the beat is skipped and retried on the next interval, so a
+single storage blip doesn't let a healthy job go stale. On context exit, the task is
+cancelled.
 
 **Tuning guidelines:**
 
@@ -893,9 +896,9 @@ understand. A worker is processing a job and sending heartbeats normally. Then a
 network partition separates it from storage. What happens next:
 
 1. The `_beat` coroutine tries to send a heartbeat, which fails with `StorageError`.
-2. Because `StorageError` is a subclass of `JQueueError` (`domain/errors.py:34`), the
-   `except JQueueError` handler catches it and the heartbeat task exits silently.
-3. The worker continues processing the job, unaware that heartbeats have stopped.
+2. The failure is treated as transient; `_beat` keeps retrying every `interval`.
+3. The partition outlasts `stale_timeout`, so no heartbeat lands in time. The worker
+   continues processing the job, unaware that its heartbeats are not getting through.
 4. After `stale_timeout`, `BrokerQueue` (on a different machine) requeues the job.
 5. Another worker picks it up — now two workers are processing the same job.
 6. When the original worker finishes and calls `ack()`, the job may no longer exist
