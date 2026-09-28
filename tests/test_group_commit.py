@@ -374,3 +374,135 @@ async def test_stale_sweep_alone_still_writes() -> None:
         assert state.jobs[0].status == JobStatus.QUEUED
     finally:
         await gcl.stop()
+
+
+# ---------------------------------------------------------------------------
+# Cancelled dequeue does not orphan claimed jobs
+# ---------------------------------------------------------------------------
+
+
+class _GatedStorage(InMemoryStorage):
+    """InMemoryStorage whose writes wait on ``gate`` once ``armed``."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.armed = False
+        self.gate = asyncio.Event()
+        self.write_started = asyncio.Event()
+
+    async def write(self, content: bytes, if_match: str | None = None) -> str:
+        if self.armed:
+            self.write_started.set()
+            await self.gate.wait()
+        return await super().write(content, if_match)
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+async def test_dequeue_cancelled_during_write_releases_claim() -> None:
+    storage = _GatedStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        job = await gcl.enqueue("task", b"data")
+        storage.armed = True
+        task = asyncio.create_task(gcl.dequeue("task"))
+        await storage.write_started.wait()
+
+        task.cancel()
+        storage.armed = False
+        storage.gate.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await _settle()
+
+        stored = (await gcl.read_state()).find(job.id)
+        assert stored is not None
+        assert stored.status == JobStatus.QUEUED
+        assert stored.heartbeat_at is None
+        # Nothing was lost: another worker can claim it right away.
+        [claimed] = await gcl.dequeue("task")
+        assert claimed.id == job.id
+    finally:
+        await gcl.stop()
+
+
+async def test_op_cancelled_before_apply_is_dropped() -> None:
+    storage = _GatedStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        await gcl.enqueue("task", b"first")
+        storage.armed = True
+        # Occupy the writer so the next ops wait in _pending.
+        blocker = asyncio.create_task(gcl.enqueue("task", b"blocker"))
+        await storage.write_started.wait()
+        cancelled_dequeue = asyncio.create_task(gcl.dequeue("task"))
+        cancelled_enqueue = asyncio.create_task(gcl.enqueue("task", b"never"))
+        await _settle()
+        cancelled_dequeue.cancel()
+        cancelled_enqueue.cancel()
+        await _settle()
+
+        storage.armed = False
+        storage.gate.set()
+        await blocker
+        await _settle()
+
+        state = await gcl.read_state()
+        assert state.in_progress_jobs() == ()
+        assert sorted(j.payload for j in state.jobs) == [b"blocker", b"first"]
+    finally:
+        await gcl.stop()
+
+
+async def test_uncancelled_dequeue_keeps_claim() -> None:
+    storage = _GatedStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        job = await gcl.enqueue("task", b"data")
+        storage.armed = True
+        task = asyncio.create_task(gcl.dequeue("task"))
+        await storage.write_started.wait()
+        storage.armed = False
+        storage.gate.set()
+
+        [claimed] = await task
+        await _settle()
+
+        assert claimed.id == job.id
+        stored = (await gcl.read_state()).find(job.id)
+        assert stored is not None
+        assert stored.status == JobStatus.IN_PROGRESS
+    finally:
+        await gcl.stop()
+
+
+async def test_cancelled_dequeue_does_not_release_job_heartbeated_since() -> None:
+    """The compensating release only touches jobs still as the claim left them."""
+    storage = _GatedStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        job = await gcl.enqueue("task", b"data")
+        storage.armed = True
+        task = asyncio.create_task(gcl.dequeue("task"))
+        await storage.write_started.wait()
+        task.cancel()
+        # Queued behind the in-flight write, ahead of the compensating op.
+        hb = asyncio.create_task(gcl.heartbeat(job.id))
+        await _settle()
+        storage.armed = False
+        storage.gate.set()
+        await hb
+        await _settle()
+
+        stored = (await gcl.read_state()).find(job.id)
+        assert stored is not None
+        assert stored.status == JobStatus.IN_PROGRESS
+    finally:
+        await gcl.stop()

@@ -19,6 +19,7 @@ are exhausted.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,10 @@ class DirectQueue:
     storage: ObjectStoragePort
     max_retries: int = 10
 
+    _cleanup: set[asyncio.Task[None]] = dataclasses.field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+
     # ------------------------------------------------------------------ #
     # Write operations                                                     #
     # ------------------------------------------------------------------ #
@@ -73,10 +78,23 @@ class DirectQueue:
 
         Optionally filter by entrypoint. Returns the list of claimed jobs.
         Returns an empty list if no jobs are available.
+
+        If the caller is cancelled while the claim is in flight, the claim is
+        allowed to finish and its jobs are then returned to QUEUED in the
+        background, so they do not sit IN_PROGRESS with no worker.
         """
-        return await self._transaction(
-            lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+        claim = asyncio.ensure_future(
+            self._transaction(
+                lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+            )
         )
+        try:
+            return await asyncio.shield(claim)
+        except asyncio.CancelledError:
+            task = asyncio.ensure_future(self._release_orphaned(claim))
+            self._cleanup.add(task)
+            task.add_done_callback(self._cleanup.discard)
+            raise
 
     async def ack(self, job_id: str) -> None:
         """Mark a job as done and remove it from the queue."""
@@ -111,6 +129,14 @@ class DirectQueue:
     # ------------------------------------------------------------------ #
     # Internal CAS loop                                                   #
     # ------------------------------------------------------------------ #
+
+    async def _release_orphaned(self, claim: asyncio.Future[list[Job]]) -> None:
+        """Hand back the jobs of a claim whose caller was cancelled."""
+        with contextlib.suppress(Exception):
+            claimed = await claim
+            if claimed:
+                await self._transaction(lambda q: q.release_claims(claimed))
+        # On failure the stale sweep is the fallback.
 
     async def _transaction[T](self, fn: Callable[[StateQueries], T]) -> T:
         """

@@ -22,6 +22,13 @@ Per-operation error isolation
 ------------------------------
 If one mutation in a batch raises (e.g., JobNotFoundError), that future gets
 the exception but the other mutations in the batch still commit normally.
+
+Cancellation
+------------
+An op whose caller is cancelled before the batch is applied is dropped. A
+dequeue whose caller is cancelled after its claim was applied has its claim
+handed back (jobs returned to QUEUED) in the next batch, so the jobs do not
+sit IN_PROGRESS with no worker until the stale timeout.
 """
 
 from __future__ import annotations
@@ -47,6 +54,7 @@ class _PendingOp[T]:
 
     fn: Callable[[StateQueries], T]
     future: asyncio.Future[T]
+    undo: Callable[[StateQueries, T], object] | None = None
 
 
 @dataclasses.dataclass
@@ -121,7 +129,8 @@ class GroupCommitLoop:
     ) -> list[Job]:
         """Claim up to batch_size QUEUED jobs and mark them IN_PROGRESS."""
         return await self._submit(
-            lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+            lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC)),
+            undo=lambda q, claimed: q.release_claims(claimed),
         )
 
     async def ack(self, job_id: str) -> None:
@@ -145,19 +154,35 @@ class GroupCommitLoop:
     # Internal machinery                                                   #
     # ------------------------------------------------------------------ #
 
-    async def _submit[T](self, fn: Callable[[StateQueries], T]) -> T:
+    async def _submit[T](
+        self,
+        fn: Callable[[StateQueries], T],
+        undo: Callable[[StateQueries, T], object] | None = None,
+    ) -> T:
         """
         Enqueue an operation and block until it is committed.
 
         Appends the op to _pending, wakes the writer, then awaits the future
         that resolves when the batch containing this op successfully commits.
+        If the caller is cancelled after the op committed, ``undo(queries,
+        result)`` is submitted as a follow-up op.
         """
         if self._stopped:
             raise JQueueError("GroupCommitLoop is stopped")
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
-        self._pending.append(_PendingOp(fn=fn, future=future))
+        self._pending.append(_PendingOp(fn=fn, future=future, undo=undo))
         self._wakeup.set()
         return await future
+
+    def _submit_undo[T](
+        self, undo: Callable[[StateQueries, T], object], result: T
+    ) -> None:
+        """Queue a compensating op nobody awaits (bypasses the stopped check)."""
+        future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        # Mark any failure as retrieved; the stale sweep is the fallback.
+        future.add_done_callback(lambda f: f.cancelled() or f.exception())
+        self._pending.append(_PendingOp(fn=lambda q: undo(q, result), future=future))
+        self._wakeup.set()
 
     async def _writer_loop(self) -> None:
         """Background coroutine — runs until stopped and all pending ops drain."""
@@ -193,6 +218,9 @@ class GroupCommitLoop:
                 results: dict[int, Any] = {}
                 per_op_errors: dict[int, Exception] = {}
                 for i, op in enumerate(batch):
+                    if op.future.done():
+                        # Caller cancelled before we applied it — drop it.
+                        continue
                     try:
                         results[i] = op.fn(queries)
                     except Exception as exc:
@@ -205,6 +233,10 @@ class GroupCommitLoop:
 
                 for i, op in enumerate(batch):
                     if op.future.done():
+                        # Cancelled while the write was in flight: the op
+                        # committed but nobody will receive its result.
+                        if op.undo is not None and i in results:
+                            self._submit_undo(op.undo, results[i])
                         continue
                     if i in per_op_errors:
                         op.future.set_exception(per_op_errors[i])
