@@ -104,7 +104,6 @@ async def test_exception_in_body_still_cancels_task() -> None:
 
 
 async def test_job_not_found_stops_heartbeat_silently() -> None:
-    """_beat() exits without raising once the job is gone."""
     queue = _MockQueue(side_effect=JobNotFoundError("job-1"))
     async with HeartbeatManager(
         queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
@@ -115,7 +114,6 @@ async def test_job_not_found_stops_heartbeat_silently() -> None:
 
 
 async def test_job_not_in_progress_stops_heartbeat_silently() -> None:
-    """_beat() exits once the claim is lost (job re-queued)."""
     queue = _MockQueue(side_effect=JobNotInProgressError("job-1", "queued"))
     async with HeartbeatManager(
         queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
@@ -126,7 +124,6 @@ async def test_job_not_in_progress_stops_heartbeat_silently() -> None:
 
 
 async def test_heartbeat_stops_after_real_stale_requeue() -> None:
-    """End to end: a swept job stops its HeartbeatManager instead of reviving it."""
     queue = DirectQueue(InMemoryStorage())
     await queue.enqueue("task", b"data")
     [job] = await queue.dequeue("task")
@@ -154,7 +151,6 @@ async def test_heartbeat_stops_after_real_stale_requeue() -> None:
     ],
 )
 async def test_transient_error_does_not_stop_heartbeat(error: Exception) -> None:
-    """A transient JQueueError skips one beat; later beats are still sent."""
 
     class _FailOnce(_MockQueue):
         async def heartbeat(self, job_id: str) -> None:
@@ -172,7 +168,6 @@ async def test_transient_error_does_not_stop_heartbeat(error: Exception) -> None
 
 
 async def test_persistent_transient_error_keeps_retrying() -> None:
-    """Heartbeats keep being attempted while storage stays unavailable."""
     queue = _MockQueue(side_effect=StorageError("down", RuntimeError("503")))
     async with HeartbeatManager(
         queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)

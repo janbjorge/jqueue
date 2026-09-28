@@ -152,7 +152,6 @@ async def test_heartbeat_queued_job_raises() -> None:
 
 
 async def test_heartbeat_swept_in_same_batch_raises() -> None:
-    """The batch sweep runs before ops; a heartbeat it overtakes must fail."""
     async with BrokerQueue(InMemoryStorage(), stale_timeout=timedelta(0)) as q:
         await q.enqueue("task", b"data")
         [job] = await q.dequeue("task")

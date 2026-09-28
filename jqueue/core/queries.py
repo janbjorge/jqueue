@@ -139,8 +139,7 @@ class StateQueries:
         JobNotFoundError
             If no job with ``job_id`` exists.
         JobNotInProgressError
-            If the job is not IN_PROGRESS (e.g. it went stale and was
-            re-queued), so the caller no longer holds it.
+            If the job is not IN_PROGRESS.
         """
         job = self._require(job_id)
         if job.status != JobStatus.IN_PROGRESS:
