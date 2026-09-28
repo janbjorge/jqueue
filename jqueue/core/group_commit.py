@@ -167,6 +167,8 @@ class GroupCommitLoop:
         """
         if self._stopped:
             raise JQueueError("GroupCommitLoop is stopped")
+        if self._task is None or self._task.done():
+            raise JQueueError("GroupCommitLoop is not running; call start() first")
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
         self._pending.append(_PendingOp(fn=fn, future=future, undo=undo))
         self._wakeup.set()
@@ -183,18 +185,29 @@ class GroupCommitLoop:
         self._wakeup.set()
 
     async def _writer_loop(self) -> None:
-        """Background coroutine — runs until stopped and all pending ops drain."""
-        while not self._stopped or self._pending:
-            if not self._pending:
-                self._wakeup.clear()
-                await self._wakeup.wait()
+        """
+        Background coroutine — runs until stopped and all pending ops drain.
 
-            if not self._pending:
-                continue
+        On exit (including cancellation) all unfinished ops are failed.
+        """
+        batch: list[_PendingOp[Any]] = []
+        try:
+            while not self._stopped or self._pending:
+                if not self._pending:
+                    self._wakeup.clear()
+                    await self._wakeup.wait()
 
-            batch = list(self._pending)
+                if not self._pending:
+                    continue
+
+                batch = list(self._pending)
+                self._pending.clear()
+                await self._commit_batch(batch)
+                batch = []
+        finally:
+            orphaned = batch + self._pending
             self._pending.clear()
-            await self._commit_batch(batch)
+            _fail_batch(orphaned, JQueueError("GroupCommitLoop writer stopped"))
 
     async def _commit_batch(self, batch: list[_PendingOp[Any]]) -> None:
         """

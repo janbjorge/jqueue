@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 
 from jqueue.adapters.storage.memory import InMemoryStorage
+from jqueue.core.broker import BrokerQueue
 from jqueue.core.group_commit import GroupCommitLoop
 from jqueue.domain.errors import CASConflictError, JobNotFoundError, JQueueError
 from jqueue.domain.models import JobStatus
@@ -62,6 +63,56 @@ async def test_submit_after_stop_raises() -> None:
     await gcl.stop()
     with pytest.raises(JQueueError):
         await gcl.enqueue("task", b"data")
+
+
+async def test_submit_before_start_raises_instead_of_hanging() -> None:
+    gcl = GroupCommitLoop(storage=InMemoryStorage())
+    with pytest.raises(JQueueError, match="not running"):
+        await asyncio.wait_for(gcl.enqueue("task", b"data"), timeout=1)
+    assert gcl._pending == []
+
+
+async def test_broker_used_without_context_manager_raises() -> None:
+    q = BrokerQueue(InMemoryStorage())
+    with pytest.raises(JQueueError, match="not running"):
+        await asyncio.wait_for(q.dequeue("task"), timeout=1)
+
+
+async def test_submit_after_start_succeeds() -> None:
+    gcl = GroupCommitLoop(storage=InMemoryStorage())
+    await gcl.start()
+    try:
+        job = await asyncio.wait_for(gcl.enqueue("task", b"data"), timeout=1)
+        assert (await gcl.read_state()).find(job.id) is not None
+    finally:
+        await gcl.stop()
+
+
+async def test_writer_cancelled_fails_waiting_ops_and_rejects_new_ones() -> None:
+    gate = asyncio.Event()
+
+    class _BlockingStorage(InMemoryStorage):
+        async def write(self, content: bytes, if_match: str | None = None) -> str:
+            await gate.wait()
+            return await super().write(content, if_match)
+
+    gcl = GroupCommitLoop(storage=_BlockingStorage())
+    await gcl.start()
+    in_flight = asyncio.create_task(gcl.enqueue("task", b"in-flight"))
+    await asyncio.sleep(0.01)  # writer is now blocked in write()
+    queued = asyncio.create_task(gcl.enqueue("task", b"queued"))
+    await asyncio.sleep(0)
+
+    assert gcl._task is not None
+    gcl._task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await gcl._task
+
+    for task in (in_flight, queued):
+        with pytest.raises(JQueueError, match="writer stopped"):
+            await asyncio.wait_for(task, timeout=1)
+    with pytest.raises(JQueueError, match="not running"):
+        await asyncio.wait_for(gcl.enqueue("task", b"late"), timeout=1)
 
 
 async def test_stop_drains_pending_ops() -> None:
