@@ -79,9 +79,7 @@ class DirectQueue:
         Optionally filter by entrypoint. Returns the list of claimed jobs.
         Returns an empty list if no jobs are available.
 
-        If the caller is cancelled while the claim is in flight, the claim is
-        allowed to finish and its jobs are then returned to QUEUED in the
-        background, so they do not sit IN_PROGRESS with no worker.
+        If cancelled mid-claim, the claimed jobs are released in the background.
 
         Raises ValueError if ``batch_size`` is less than 1.
         """
@@ -134,21 +132,19 @@ class DirectQueue:
     # ------------------------------------------------------------------ #
 
     async def _release_orphaned(self, claim: asyncio.Future[list[Job]]) -> None:
-        """Hand back the jobs of a claim whose caller was cancelled."""
+        """Best effort; the stale sweep is the fallback."""
         with contextlib.suppress(Exception):
             claimed = await claim
             if claimed:
                 await self._transaction(lambda q: q.release_claims(claimed))
-        # On failure the stale sweep is the fallback.
 
     async def _transaction[T](self, fn: Callable[[StateQueries], T]) -> T:
         """
         Read-modify-write with CAS retry loop.
 
         fn(queries) -> result  (synchronous, re-run on a fresh snapshot per retry)
-        Retries up to self.max_retries on CASConflictError. If fn leaves the
-        state unchanged (e.g. dequeue on an empty queue), no write is made:
-        the snapshot just read is a valid linearization point.
+        Retries up to self.max_retries on CASConflictError. Skips the write
+        if fn changed nothing.
         """
         for attempt in range(self.max_retries):
             content, etag = await self.storage.read()

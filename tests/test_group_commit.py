@@ -356,8 +356,6 @@ async def test_commit_batch_retries_on_cas_conflict() -> None:
 
 
 class _CountingStorage(InMemoryStorage):
-    """InMemoryStorage that counts successful writes."""
-
     writes: int = 0
 
     async def write(self, content: bytes, if_match: str | None = None) -> str:
@@ -409,7 +407,6 @@ async def test_batch_with_one_change_still_writes_once() -> None:
 
 
 async def test_stale_sweep_alone_still_writes() -> None:
-    """A batch whose only change is the stale sweep must persist it."""
     storage = _CountingStorage()
     gcl = GroupCommitLoop(storage=storage, stale_timeout=timedelta(0))
     await gcl.start()
@@ -474,7 +471,6 @@ async def test_dequeue_cancelled_during_write_releases_claim() -> None:
         assert stored is not None
         assert stored.status == JobStatus.QUEUED
         assert stored.heartbeat_at is None
-        # Nothing was lost: another worker can claim it right away.
         [claimed] = await gcl.dequeue("task")
         assert claimed.id == job.id
     finally:
@@ -534,7 +530,6 @@ async def test_uncancelled_dequeue_keeps_claim() -> None:
 
 
 async def test_cancelled_dequeue_does_not_release_job_heartbeated_since() -> None:
-    """The compensating release only touches jobs still as the claim left them."""
     storage = _GatedStorage()
     gcl = GroupCommitLoop(storage=storage)
     await gcl.start()
@@ -544,7 +539,6 @@ async def test_cancelled_dequeue_does_not_release_job_heartbeated_since() -> Non
         task = asyncio.create_task(gcl.dequeue("task"))
         await storage.write_started.wait()
         task.cancel()
-        # Queued behind the in-flight write, ahead of the compensating op.
         hb = asyncio.create_task(gcl.heartbeat(job.id))
         await _settle()
         storage.armed = False

@@ -413,10 +413,8 @@ storage = LocalFileSystemStorage("/var/lib/myapp/queue.json")
 # accepts str or pathlib.Path; parent directories are created automatically
 ```
 
-Uses `fcntl.flock` on a sidecar `<path>.lock` file for POSIX exclusive locking. The
-etag is a SHA-256 hex digest of the file content. Writes go to a temporary file that is
-fsynced and atomically renamed over the state file, so a crash or full disk never
-leaves a truncated state file behind.
+Uses `fcntl.flock` on a sidecar `<path>.lock` for POSIX exclusive locking, and writes
+via temp file + atomic rename. The etag is a SHA-256 hex digest of the file content.
 **POSIX-only** (Linux, macOS). Not safe across machines or on NFS.
 
 ### S3Storage
@@ -499,7 +497,7 @@ class MyStorage:
     async def write(self, content: bytes, if_match: str | None = None) -> str:
         """
         Conditional write.
-        - if_match=None  → create-only put (first write); raise CASConflictError if it exists
+        - if_match=None  → create-only put (first write)
         - if_match=etag  → only write if current etag matches; raise CASConflictError otherwise
         Returns the new etag.
         """
@@ -559,11 +557,8 @@ async with HeartbeatManager(
 ```
 
 Starts a background task that calls `queue.heartbeat(job_id)` every `interval` seconds.
-The task is cancelled when the context exits. If `heartbeat` raises `JobNotFoundError`
-(e.g., the job was acked by another process) or `JobNotInProgressError` (the job went
-stale and was re-queued, so this worker lost its claim), the task stops silently. Other
-`JQueueError`s (`StorageError`, `CASConflictError`) are treated as transient: that beat
-is skipped and the next one is attempted on schedule.
+The task is cancelled when the context exits. It stops silently on `JobNotFoundError`
+or `JobNotInProgressError`, and retries other `JQueueError`s on the next interval.
 
 ### `Job`
 
@@ -597,7 +592,7 @@ from jqueue import (
     JQueueError,       # base class, catches all jqueue errors
     CASConflictError,  # CAS write rejected (etag mismatch), usually retried internally
     JobNotFoundError,  # job_id not in current state; has .job_id attribute
-    JobNotInProgressError,  # heartbeat on a job that is not IN_PROGRESS; .job_id, .status
+    JobNotInProgressError,  # job not IN_PROGRESS; .job_id, .status
     StorageError,      # I/O failure from the storage backend; has .cause attribute
 )
 ```
@@ -615,9 +610,8 @@ except JobNotFoundError:
     pass  # already removed, safe to ignore
 ```
 
-`JobNotInProgressError` is raised by `heartbeat` when the job exists but is no longer
-`IN_PROGRESS` — typically because it went stale and the sweep re-queued it. The worker
-no longer holds the job and another worker may pick it up.
+`JobNotInProgressError` is raised by `heartbeat` when the job was re-queued (e.g. as
+stale): the worker no longer holds it.
 
 ## Architecture
 
@@ -751,11 +745,9 @@ trade-off is one hash computation per read and write, but for the file sizes jqu
 produces (kilobytes) this is negligible.
 
 **First-write semantics.** When the queue is brand new and no blob exists yet, the
-adapter receives `if_match=None`, meaning "create the object; fail if it already
-exists". S3 sends `IfNoneMatch: *`; GCS uses `if_generation_match=0`, the GCS
-convention for the same thing. Either way the first write is conditional, so two
-processes racing to create the blob can't silently overwrite each other's first
-operation — the loser gets a `CASConflictError` and retries against the winner's state.
+adapter receives `if_match=None`: create-only. S3 sends `IfNoneMatch: *`, GCS uses
+`if_generation_match=0`. Two processes racing to create the blob can't overwrite each
+other; the loser gets `CASConflictError` and retries.
 
 In practice this rarely matters because the retry loop handles it, but it's worth
 understanding if you're debugging queue initialisation issues.
@@ -877,11 +869,8 @@ satisfying that signature works — `BrokerQueue`, `DirectQueue`, `GroupCommitLo
 test double.
 
 Inside the manager, a background task sleeps for `interval` seconds, then calls
-`heartbeat`. If the call raises `JobNotFoundError` or `JobNotInProgressError`, the task
-exits silently — the job has already been handled, or was re-queued and is no longer
-this worker's. Any other `JQueueError` (`StorageError`, `CASConflictError`)
-is treated as transient: the beat is skipped and retried on the next interval, so a
-single storage blip doesn't let a healthy job go stale. On context exit, the task is
+`heartbeat`. On `JobNotFoundError` or `JobNotInProgressError` the task exits silently;
+other `JQueueError`s are retried on the next interval. On context exit, the task is
 cancelled.
 
 **Tuning guidelines:**
@@ -903,9 +892,8 @@ understand. A worker is processing a job and sending heartbeats normally. Then a
 network partition separates it from storage. What happens next:
 
 1. The `_beat` coroutine tries to send a heartbeat, which fails with `StorageError`.
-2. The failure is treated as transient; `_beat` keeps retrying every `interval`.
-3. The partition outlasts `stale_timeout`, so no heartbeat lands in time. The worker
-   continues processing the job, unaware that its heartbeats are not getting through.
+2. `_beat` keeps retrying every `interval`.
+3. The partition outlasts `stale_timeout`; the worker keeps processing, unaware.
 4. After `stale_timeout`, `BrokerQueue` (on a different machine) requeues the job.
 5. Another worker picks it up — now two workers are processing the same job.
 6. When the original worker finishes and calls `ack()`, the job may no longer exist

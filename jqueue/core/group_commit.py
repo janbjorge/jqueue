@@ -25,10 +25,8 @@ the exception but the other mutations in the batch still commit normally.
 
 Cancellation
 ------------
-An op whose caller is cancelled before the batch is applied is dropped. A
-dequeue whose caller is cancelled after its claim was applied has its claim
-handed back (jobs returned to QUEUED) in the next batch, so the jobs do not
-sit IN_PROGRESS with no worker until the stale timeout.
+Ops cancelled before their batch is applied are dropped. A dequeue cancelled
+after its claim committed has the claim released in the next batch.
 """
 
 from __future__ import annotations
@@ -127,11 +125,7 @@ class GroupCommitLoop:
         *,
         batch_size: int = 1,
     ) -> list[Job]:
-        """
-        Claim up to batch_size QUEUED jobs and mark them IN_PROGRESS.
-
-        Raises ValueError if ``batch_size`` is less than 1.
-        """
+        """Claim up to batch_size (>= 1) QUEUED jobs and mark them IN_PROGRESS."""
         check_batch_size(batch_size)
         return await self._submit(
             lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC)),
@@ -169,13 +163,11 @@ class GroupCommitLoop:
 
         Appends the op to _pending, wakes the writer, then awaits the future
         that resolves when the batch containing this op successfully commits.
-        If the caller is cancelled after the op committed, ``undo(queries,
-        result)`` is submitted as a follow-up op.
+        If the caller is cancelled after commit, ``undo`` runs in a later batch.
         """
         if self._stopped:
             raise JQueueError("GroupCommitLoop is stopped")
         if self._task is None or self._task.done():
-            # Nobody would ever resolve the future — fail instead of hanging.
             raise JQueueError("GroupCommitLoop is not running; call start() first")
         future: asyncio.Future[T] = asyncio.get_running_loop().create_future()
         self._pending.append(_PendingOp(fn=fn, future=future, undo=undo))
@@ -185,9 +177,9 @@ class GroupCommitLoop:
     def _submit_undo[T](
         self, undo: Callable[[StateQueries, T], object], result: T
     ) -> None:
-        """Queue a compensating op nobody awaits (bypasses the stopped check)."""
+        """Queue an unawaited compensating op (allowed after stop())."""
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
-        # Mark any failure as retrieved; the stale sweep is the fallback.
+        # Retrieve failures so they aren't logged; the stale sweep is the fallback.
         future.add_done_callback(lambda f: f.cancelled() or f.exception())
         self._pending.append(_PendingOp(fn=lambda q: undo(q, result), future=future))
         self._wakeup.set()
@@ -196,8 +188,7 @@ class GroupCommitLoop:
         """
         Background coroutine — runs until stopped and all pending ops drain.
 
-        If the task dies (e.g. it is cancelled), every op still waiting —
-        in flight or pending — is failed so no caller hangs.
+        On exit (including cancellation) all unfinished ops are failed.
         """
         batch: list[_PendingOp[Any]] = []
         try:
@@ -224,7 +215,7 @@ class GroupCommitLoop:
 
         Retries on CASConflictError. Per-mutation exceptions only fail that
         op's future; the rest of the batch still commits on the same write.
-        If the batch leaves the state unchanged, no write is made.
+        Skips the write if the batch changed nothing.
         """
         for attempt in range(_MAX_RETRIES):
             try:
@@ -239,22 +230,19 @@ class GroupCommitLoop:
                 per_op_errors: dict[int, Exception] = {}
                 for i, op in enumerate(batch):
                     if op.future.done():
-                        # Caller cancelled before we applied it — drop it.
+                        # Cancelled before apply: drop.
                         continue
                     try:
                         results[i] = op.fn(queries)
                     except Exception as exc:
                         per_op_errors[i] = exc
 
-                # Nothing changed (e.g. only empty dequeues / failed ops):
-                # skip the write, the snapshot is a valid linearization point.
                 if queries.state is not snapshot:
                     await self.storage.write(codec.encode(queries.state), if_match=etag)
 
                 for i, op in enumerate(batch):
                     if op.future.done():
-                        # Cancelled while the write was in flight: the op
-                        # committed but nobody will receive its result.
+                        # Cancelled during the write: compensate.
                         if op.undo is not None and i in results:
                             self._submit_undo(op.undo, results[i])
                         continue

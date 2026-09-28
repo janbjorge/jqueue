@@ -170,7 +170,6 @@ def test_sync_write_does_not_reload_blob_after_upload():
 
 
 def test_sync_write_returns_uploaded_generation_not_a_later_one():
-    """A concurrent write after our upload must not leak into our etag."""
     pytest.importorskip("google.api_core.exceptions")
     storage, blob, _ = _make_storage()
 
