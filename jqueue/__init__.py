@@ -53,7 +53,8 @@ Architecture
 Follows the Ports & Adapters pattern:
   domain/   — pure value types (Job, QueueState, JobStatus)
   ports/    — Protocol interfaces (ObjectStoragePort)
-  core/     — business logic (DirectQueue, BrokerQueue, GroupCommitLoop)
+  core/     — services (DirectQueue, BrokerQueue, GroupCommitLoop) and
+              pure state queries (StateQueries)
   adapters/ — concrete storage implementations
 """
 

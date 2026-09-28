@@ -81,6 +81,7 @@ jqueue/
 ├── core/            # Business logic
 │   ├── broker.py    # BrokerQueue (high-throughput with group commit)
 │   ├── direct.py    # DirectQueue (simple one-operation-per-write)
+│   ├── queries.py   # StateQueries (pure ops on one QueueState snapshot)
 │   ├── group_commit.py  # Group commit batching algorithm
 │   ├── heartbeat.py # HeartbeatManager for job liveness
 │   └── codec.py     # JSON serialization
@@ -98,6 +99,9 @@ jqueue/
 - **Dependency injection**: Via constructor parameters
 - **Async-first**: All I/O operations use async/await
 - **CAS semantics**: Compare-and-set for concurrency safety
+- **Queries vs services**: `StateQueries` holds pure, synchronous domain operations on one
+  `QueueState` snapshot; services (`DirectQueue`, `GroupCommitLoop`) own storage I/O and
+  the CAS cycle, and each public method is one unit of work (see `queries-and-services.md`)
 
 ## Code Style Guidelines
 
@@ -246,6 +250,7 @@ class CustomStorage:
 ## References
 
 - **Architecture**: See `ports-and-adapters.md` for detailed design rationale
+- **Queries & Services**: See `queries-and-services.md` for the query/service split
 - **README**: Comprehensive usage examples and API documentation
 - **Repository**: https://github.com/janbjorge/jqueue
 - **License**: MIT

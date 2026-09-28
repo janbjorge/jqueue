@@ -24,20 +24,25 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from jqueue.core import codec
-from jqueue.domain.errors import CASConflictError, JobNotFoundError
-from jqueue.domain.models import Job, JobStatus, QueueState
+from jqueue.core.queries import StateQueries
+from jqueue.domain.errors import CASConflictError
+from jqueue.domain.models import Job, QueueState
 from jqueue.ports.storage import ObjectStoragePort
-
-MutationFn = Callable[[QueueState], QueueState]
 
 
 @dataclasses.dataclass
 class DirectQueue:
     """
-    Thin stateless wrapper around ObjectStoragePort.
+    Thin stateless service around ObjectStoragePort.
 
     All methods are async and safe to call from multiple coroutines;
-    each operation performs a full CAS cycle independently.
+    each operation performs a full CAS cycle independently. Each public
+    method is one unit of work: it either commits entirely or raises.
+
+    Parameters
+    ----------
+    storage     : any ObjectStoragePort implementation
+    max_retries : CAS attempts before CASConflictError is re-raised
     """
 
     storage: ObjectStoragePort
@@ -55,8 +60,7 @@ class DirectQueue:
     ) -> Job:
         """Add a new job to the queue. Returns the committed Job."""
         job = Job.new(entrypoint, payload, priority)
-        await self._mutate(lambda state: state.with_job_added(job))
-        return job
+        return await self._transaction(lambda q: q.add(job))
 
     async def dequeue(
         self,
@@ -70,51 +74,21 @@ class DirectQueue:
         Optionally filter by entrypoint. Returns the list of claimed jobs.
         Returns an empty list if no jobs are available.
         """
-        claimed: list[Job] = []
-
-        def _fn(state: QueueState) -> QueueState:
-            nonlocal claimed
-            available = state.queued_jobs(entrypoint)[:batch_size]
-            claimed = []
-            new_state = state
-            for job in available:
-                updated = job.with_status(JobStatus.IN_PROGRESS).with_heartbeat(
-                    datetime.now(UTC)
-                )
-                new_state = new_state.with_job_replaced(updated)
-                claimed.append(updated)
-            return new_state
-
-        await self._mutate(_fn)
-        return claimed
+        return await self._transaction(
+            lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+        )
 
     async def ack(self, job_id: str) -> None:
         """Mark a job as done and remove it from the queue."""
-        await self._mutate(lambda state: state.with_job_removed(job_id))
+        await self._transaction(lambda q: q.remove(job_id))
 
     async def nack(self, job_id: str) -> None:
         """Return a job to QUEUED status (worker failed or declined it)."""
-
-        def _fn(state: QueueState) -> QueueState:
-            job = state.find(job_id)
-            if job is None:
-                raise JobNotFoundError(job_id)
-            return state.with_job_replaced(
-                job.with_status(JobStatus.QUEUED).with_heartbeat(None)
-            )
-
-        await self._mutate(_fn)
+        await self._transaction(lambda q: q.release(job_id))
 
     async def heartbeat(self, job_id: str) -> None:
         """Update the heartbeat timestamp of an IN_PROGRESS job."""
-
-        def _fn(state: QueueState) -> QueueState:
-            job = state.find(job_id)
-            if job is None:
-                raise JobNotFoundError(job_id)
-            return state.with_job_replaced(job.with_heartbeat(datetime.now(UTC)))
-
-        await self._mutate(_fn)
+        await self._transaction(lambda q: q.touch(job_id, datetime.now(UTC)))
 
     async def requeue_stale(self, timeout: timedelta) -> int:
         """
@@ -123,18 +97,7 @@ class DirectQueue:
         Returns the number of jobs re-queued.
         """
         cutoff = datetime.now(UTC) - timeout
-        requeued = 0
-
-        def _fn(state: QueueState) -> QueueState:
-            nonlocal requeued
-            old_in_progress = {j.id for j in state.in_progress_jobs()}
-            new_state = state.requeue_stale(cutoff)
-            new_in_progress = {j.id for j in new_state.in_progress_jobs()}
-            requeued = len(old_in_progress - new_in_progress)
-            return new_state
-
-        await self._mutate(_fn)
-        return requeued
+        return await self._transaction(lambda q: q.requeue_stale(cutoff))
 
     # ------------------------------------------------------------------ #
     # Read operations (no CAS needed)                                     #
@@ -149,22 +112,22 @@ class DirectQueue:
     # Internal CAS loop                                                   #
     # ------------------------------------------------------------------ #
 
-    async def _mutate(self, fn: MutationFn) -> None:
+    async def _transaction[T](self, fn: Callable[[StateQueries], T]) -> T:
         """
         Read-modify-write with CAS retry loop.
 
-        fn(state) -> new_state  (synchronous)
+        fn(queries) -> result  (synchronous, re-run on a fresh snapshot per retry)
         Retries up to self.max_retries on CASConflictError.
         """
         for attempt in range(self.max_retries):
             content, etag = await self.storage.read()
-            state = codec.decode(content)
-            new_state = fn(state)
-            new_content = codec.encode(new_state)
+            queries = StateQueries(codec.decode(content))
+            result = fn(queries)
             try:
-                await self.storage.write(new_content, if_match=etag)
-                return
+                await self.storage.write(codec.encode(queries.state), if_match=etag)
+                return result
             except CASConflictError:
                 if attempt == self.max_retries - 1:
                     raise
                 await asyncio.sleep(0.01 * (attempt + 1))
+        raise CASConflictError("Max CAS retries exceeded")
