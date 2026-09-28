@@ -18,10 +18,8 @@ Usage
 If the worker raises, the heartbeat task is cancelled. Callers should
 nack() the job in an except/finally block.
 
-The heartbeat loop stops when the job no longer exists (JobNotFoundError).
-Other JQueueErrors — StorageError, CASConflictError — are treated as
-transient: the beat is skipped and retried on the next interval, so a
-single storage blip does not let the job go stale.
+The loop stops on JobNotFoundError; other JQueueErrors are retried on the
+next interval.
 
 HeartbeatManager is typed against the structural Protocol _HasHeartbeat, so
 it works with BrokerQueue, DirectQueue, and GroupCommitLoop without any
@@ -94,6 +92,5 @@ class HeartbeatManager:
                 # Job was acked or removed — stop silently.
                 return
             except JQueueError:
-                # Transient (storage failure, CAS retries exhausted) — retry
-                # on the next interval rather than letting the job go stale.
+                # Transient: retry on the next interval.
                 continue
