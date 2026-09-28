@@ -17,20 +17,10 @@ The jqueue codec always produces non-empty JSON.
 
 CAS semantics
 -------------
-write(content, if_match) acquires an exclusive flock on a sidecar lock file
-(``<path>.lock``), re-reads the current etag while holding the lock, and
-raises CASConflictError if it differs from if_match.
-
-Crash safety
-------------
-The new content is written to a temporary file in the same directory,
-fsynced, and moved over ``path`` with os.replace(); the directory is then
-fsynced. A crash or I/O error mid-write therefore leaves either the old or
-the new state on disk — never a truncated or partially written file. Readers
-never see a partial file either, so read() needs no lock.
-
-Writers from before this change locked ``path`` itself, not the sidecar
-lock file; do not run old and new writers against the same file at once.
+write(content, if_match) takes an exclusive flock on ``<path>.lock``,
+re-checks the etag, then writes a temp file, fsyncs it and os.replace()s it
+over ``path``. A failed write leaves the old state intact, and readers never
+see a partial file.
 
 POSIX-only (Linux, macOS). Not compatible with NFS or distributed filesystems.
 """

@@ -117,7 +117,6 @@ def _leftovers(tmp_path: Path) -> list[str]:
 
 
 async def test_short_write_leaves_previous_content_intact(tmp_path):
-    """Disk-full style failure mid-write must not truncate the state file."""
     path = tmp_path / "state.json"
     storage = LocalFileSystemStorage(path)
     old = b'{"version": 1, "jobs": []}'
@@ -179,7 +178,6 @@ async def test_failed_cas_leaves_no_temp_files(tmp_path):
 
 
 async def test_concurrent_writers_same_etag_exactly_one_wins(tmp_path):
-    """The sidecar lock still serialises writers: CAS stays exclusive."""
     path = tmp_path / "state.json"
     etag = await LocalFileSystemStorage(path).write(b"base")
 
