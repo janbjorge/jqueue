@@ -12,7 +12,12 @@ S3 supports conditional PutObject via the IfMatch parameter (added Aug 2024).
             → CASConflictError
 
 First write (if_match=None):
-  IfMatch is omitted — unconditional put.
+  IfNoneMatch="*" — create-only put; S3 rejects it with PreconditionFailed if
+  the object already exists, so concurrent initialisers cannot overwrite each
+  other.
+
+Concurrent conditional writes to the same key may also be rejected with
+409 ConditionalRequestConflict; that is mapped to CASConflictError as well.
 
 Compatible with S3-compatible storage that supports conditional writes:
   MinIO, Cloudflare R2, Tigris, etc.
@@ -103,22 +108,28 @@ class S3Storage:
                     "Body": content,
                     "ContentType": "application/json",
                 }
-                if if_match is not None:
+                if if_match is None:
+                    put_kwargs["IfNoneMatch"] = "*"
+                else:
                     put_kwargs["IfMatch"] = if_match
 
                 try:
                     response = await s3.put_object(**put_kwargs)
                     return str(response["ETag"])
                 except Exception as exc:
-                    if _s3_error_code(exc) == "PreconditionFailed":
+                    code = _s3_error_code(exc)
+                    if code in _CAS_CONFLICT_CODES:
                         raise CASConflictError(
-                            "S3 ETag mismatch (PreconditionFailed)"
+                            f"S3 conditional write failed ({code})"
                         ) from exc
                     raise
         except (CASConflictError, StorageError):
             raise
         except Exception as exc:
             raise StorageError("S3 write failed", exc) from exc
+
+
+_CAS_CONFLICT_CODES = frozenset({"PreconditionFailed", "ConditionalRequestConflict"})
 
 
 def _s3_error_code(exc: Exception) -> str:
