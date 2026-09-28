@@ -179,7 +179,7 @@ class GroupCommitLoop:
 
         Retries on CASConflictError. Per-mutation exceptions only fail that
         op's future; the rest of the batch still commits on the same write.
-        If the batch leaves the state unchanged, no write is made.
+        Skips the write if the batch changed nothing.
         """
         for attempt in range(_MAX_RETRIES):
             try:
@@ -198,8 +198,6 @@ class GroupCommitLoop:
                     except Exception as exc:
                         per_op_errors[i] = exc
 
-                # Nothing changed (e.g. only empty dequeues / failed ops):
-                # skip the write, the snapshot is a valid linearization point.
                 if queries.state is not snapshot:
                     await self.storage.write(codec.encode(queries.state), if_match=etag)
 

@@ -305,8 +305,6 @@ async def test_commit_batch_retries_on_cas_conflict() -> None:
 
 
 class _CountingStorage(InMemoryStorage):
-    """InMemoryStorage that counts successful writes."""
-
     writes: int = 0
 
     async def write(self, content: bytes, if_match: str | None = None) -> str:
@@ -358,7 +356,6 @@ async def test_batch_with_one_change_still_writes_once() -> None:
 
 
 async def test_stale_sweep_alone_still_writes() -> None:
-    """A batch whose only change is the stale sweep must persist it."""
     storage = _CountingStorage()
     gcl = GroupCommitLoop(storage=storage, stale_timeout=timedelta(0))
     await gcl.start()

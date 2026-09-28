@@ -205,7 +205,6 @@ async def test_heartbeat_queued_job_raises(queue: DirectQueue) -> None:
 
 
 async def test_heartbeat_after_stale_requeue_raises(queue: DirectQueue) -> None:
-    """A worker whose claim was swept must be told, not silently kept alive."""
     await queue.enqueue("task", b"data")
     [job] = await queue.dequeue("task")
     assert await queue.requeue_stale(timedelta(seconds=-1)) == 1
@@ -304,8 +303,6 @@ async def test_cas_exhausted_raises_conflict() -> None:
 
 
 class _CountingStorage(InMemoryStorage):
-    """InMemoryStorage that counts successful writes."""
-
     writes: int = 0
 
     async def write(self, content: bytes, if_match: str | None = None) -> str:
@@ -372,7 +369,6 @@ async def test_state_changing_ops_still_write() -> None:
 
 
 async def test_empty_dequeue_does_not_conflict_with_concurrent_writer() -> None:
-    """A no-op read cannot cause a CAS conflict for a real writer."""
     storage = AsyncMock(wraps=InMemoryStorage())
     queue = DirectQueue(storage)
     await queue.enqueue("task", b"data")
