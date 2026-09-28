@@ -1,8 +1,10 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from jqueue.adapters.storage.s3 import S3Storage, _s3_error_code
+from jqueue.core.direct import DirectQueue
 from jqueue.domain.errors import CASConflictError, StorageError
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ async def test_read_generic_exception_raises_storage_error():
 # ---------------------------------------------------------------------------
 
 
-async def test_write_without_if_match_no_condition_header():
+async def test_write_without_if_match_is_create_only():
     storage, s3 = _make_storage()
     s3.put_object.return_value = {"ETag": '"new-etag"'}
 
@@ -104,6 +106,7 @@ async def test_write_without_if_match_no_condition_header():
 
     assert etag == '"new-etag"'
     call_kwargs = s3.put_object.call_args.kwargs
+    assert call_kwargs["IfNoneMatch"] == "*"
     assert "IfMatch" not in call_kwargs
 
 
@@ -116,6 +119,7 @@ async def test_write_with_if_match_sends_condition():
     assert etag == '"new-etag"'
     call_kwargs = s3.put_object.call_args.kwargs
     assert call_kwargs["IfMatch"] == '"old-etag"'
+    assert "IfNoneMatch" not in call_kwargs
 
 
 async def test_write_sends_correct_bucket_and_key():
@@ -136,6 +140,33 @@ async def test_write_precondition_failed_raises_cas_conflict():
 
     with pytest.raises(CASConflictError):
         await storage.write(b"data", if_match='"etag"')
+
+
+async def test_create_when_object_exists_raises_cas_conflict():
+    storage, s3 = _make_storage()
+    s3.put_object.side_effect = _client_error("PreconditionFailed")
+
+    with pytest.raises(CASConflictError):
+        await storage.write(b"data")
+
+
+@pytest.mark.parametrize("if_match", [None, '"etag"'])
+async def test_write_conditional_request_conflict_raises_cas_conflict(
+    if_match: str | None,
+) -> None:
+    storage, s3 = _make_storage()
+    s3.put_object.side_effect = _client_error("ConditionalRequestConflict")
+
+    with pytest.raises(CASConflictError):
+        await storage.write(b"data", if_match=if_match)
+
+
+async def test_write_other_client_error_is_not_cas_conflict():
+    storage, s3 = _make_storage()
+    s3.put_object.side_effect = _client_error("AccessDenied")
+
+    with pytest.raises(StorageError):
+        await storage.write(b"data")
 
 
 async def test_write_other_error_raises_storage_error():
@@ -216,3 +247,67 @@ def test_s3_error_code_empty_code():
     exc = Exception()
     exc.response = {"Error": {"Code": ""}}  # type: ignore[attr-defined]
     assert _s3_error_code(exc) == ""
+
+
+# ---------------------------------------------------------------------------
+# Concurrent first write (conditional-write-aware fake S3)
+# ---------------------------------------------------------------------------
+
+
+class _FakeS3:
+    """Single-object S3 double that honours IfMatch / IfNoneMatch."""
+
+    def __init__(self) -> None:
+        self.body: bytes | None = None
+        self.etag: str | None = None
+        self._n = 0
+
+    async def get_object(self, **kwargs: object) -> dict[str, object]:
+        snapshot, etag = self.body, self.etag
+        # Yield after snapshotting so concurrent readers see the same state.
+        await asyncio.sleep(0)
+        if snapshot is None:
+            raise _client_error("NoSuchKey")
+        body = AsyncMock()
+        body.read.return_value = snapshot
+        return {"Body": body, "ETag": etag}
+
+    async def put_object(self, **kwargs: object) -> dict[str, object]:
+        if kwargs.get("IfNoneMatch") == "*" and self.body is not None:
+            raise _client_error("PreconditionFailed")
+        if "IfMatch" in kwargs and kwargs["IfMatch"] != self.etag:
+            raise _client_error("PreconditionFailed")
+        self._n += 1
+        self.body = kwargs["Body"]  # type: ignore[assignment]
+        self.etag = f'"{self._n}"'
+        return {"ETag": self.etag}
+
+
+def _fake_s3_storage(fake: _FakeS3) -> S3Storage:
+    session = MagicMock()
+    session.client.side_effect = lambda *a, **k: _AsyncCM(fake)
+    return S3Storage(bucket="b", key="k", session=session)
+
+
+async def test_racing_first_writes_second_gets_cas_conflict():
+    fake = _FakeS3()
+    a, b = _fake_s3_storage(fake), _fake_s3_storage(fake)
+
+    assert await a.read() == (b"", None)
+    assert await b.read() == (b"", None)
+
+    await a.write(b"first")
+    with pytest.raises(CASConflictError):
+        await b.write(b"second")
+    assert fake.body == b"first"
+
+
+async def test_racing_first_enqueues_both_survive():
+    fake = _FakeS3()
+    q1 = DirectQueue(_fake_s3_storage(fake))
+    q2 = DirectQueue(_fake_s3_storage(fake))
+
+    j1, j2 = await asyncio.gather(q1.enqueue("t", b"1"), q2.enqueue("t", b"2"))
+
+    state = await q1.read_state()
+    assert {j.id for j in state.jobs} == {j1.id, j2.id}

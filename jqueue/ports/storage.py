@@ -8,7 +8,7 @@ No base class or registration is required — Python's structural subtyping
 CAS write contract
 ------------------
 write(content, if_match=None)
-  - if if_match is None  → unconditional put (used for the very first write)
+  - if if_match is None  → create-only put (fails if the object exists)
   - if if_match is given → conditional put
       succeeds → storage returns the new etag (opaque str)
       fails    → raises CASConflictError
@@ -67,7 +67,7 @@ class ObjectStoragePort(Protocol):
         Parameters
         ----------
         content  : new object body
-        if_match : etag from the previous read(), or None for unconditional write
+        if_match : etag from the previous read(), or None to create the object
 
         Returns
         -------
@@ -75,7 +75,7 @@ class ObjectStoragePort(Protocol):
 
         Raises
         ------
-        CASConflictError   if if_match is provided but does not match the current etag
+        CASConflictError   if the etag doesn't match (or, for None, the object exists)
         StorageError       for any other I/O failure
         """
         ...

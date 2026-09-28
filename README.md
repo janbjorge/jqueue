@@ -497,7 +497,7 @@ class MyStorage:
     async def write(self, content: bytes, if_match: str | None = None) -> str:
         """
         Conditional write.
-        - if_match=None  → unconditional put (first write)
+        - if_match=None  → create-only put (first write)
         - if_match=etag  → only write if current etag matches; raise CASConflictError otherwise
         Returns the new etag.
         """
@@ -745,16 +745,12 @@ trade-off is one hash computation per read and write, but for the file sizes jqu
 produces (kilobytes) this is negligible.
 
 **First-write semantics.** When the queue is brand new and no blob exists yet, the
-adapter receives `if_match=None`. S3 and GCS handle this differently. S3 simply omits
-the `IfMatch` header, making the first write unconditional — if two processes race to
-create the blob, the last one wins silently. GCS uses `if_generation_match=0`, which is
-a GCS convention meaning "only succeed if the object does not exist yet." This means
-GCS's first write is itself conditional — a useful extra safety net against concurrent
-initialisers, but it also means you can get a `CASConflictError` on the very first write
-if two processes start simultaneously.
+adapter receives `if_match=None`: create-only. S3 sends `IfNoneMatch: *`, GCS uses
+`if_generation_match=0`. Two processes racing to create the blob can't overwrite each
+other; the loser gets `CASConflictError` and retries.
 
 In practice this rarely matters because the retry loop handles it, but it's worth
-understanding if you're debugging queue initialisation issues on GCS.
+understanding if you're debugging queue initialisation issues.
 
 **Error classification.** The adapters distinguish three kinds of failures:
 `CASConflictError` (expected, retried automatically), `StorageError` (I/O problem with
