@@ -558,7 +558,7 @@ async with HeartbeatManager(
 
 Starts a background task that calls `queue.heartbeat(job_id)` every `interval` seconds.
 The task is cancelled when the context exits. It stops silently on `JobNotFoundError`
-and retries other `JQueueError`s on the next interval.
+or `JobNotInProgressError`, and retries other `JQueueError`s on the next interval.
 
 ### `Job`
 
@@ -592,6 +592,7 @@ from jqueue import (
     JQueueError,       # base class, catches all jqueue errors
     CASConflictError,  # CAS write rejected (etag mismatch), usually retried internally
     JobNotFoundError,  # job_id not in current state; has .job_id attribute
+    JobNotInProgressError,  # job not IN_PROGRESS; .job_id, .status
     StorageError,      # I/O failure from the storage backend; has .cause attribute
 )
 ```
@@ -608,6 +609,9 @@ try:
 except JobNotFoundError:
     pass  # already removed, safe to ignore
 ```
+
+`JobNotInProgressError` is raised by `heartbeat` when the job was re-queued (e.g. as
+stale): the worker no longer holds it.
 
 ## Architecture
 
@@ -869,8 +873,9 @@ satisfying that signature works — `BrokerQueue`, `DirectQueue`, `GroupCommitLo
 test double.
 
 Inside the manager, a background task sleeps for `interval` seconds, then calls
-`heartbeat`. On `JobNotFoundError` the task exits silently; other `JQueueError`s are
-retried on the next interval. On context exit, the task is cancelled.
+`heartbeat`. On `JobNotFoundError` or `JobNotInProgressError` the task exits silently;
+other `JQueueError`s are retried on the next interval. On context exit, the task is
+cancelled.
 
 **Tuning guidelines:**
 

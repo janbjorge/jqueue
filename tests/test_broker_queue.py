@@ -1,10 +1,11 @@
 import asyncio
+from datetime import timedelta
 
 import pytest
 
 from jqueue.adapters.storage.memory import InMemoryStorage
 from jqueue.core.broker import BrokerQueue
-from jqueue.domain.errors import JobNotFoundError
+from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError
 from jqueue.domain.models import JobStatus
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,25 @@ async def test_heartbeat_missing_job_raises() -> None:
     async with BrokerQueue(InMemoryStorage()) as q:
         with pytest.raises(JobNotFoundError):
             await q.heartbeat("nonexistent")
+
+
+async def test_heartbeat_queued_job_raises() -> None:
+    async with BrokerQueue(InMemoryStorage()) as q:
+        job = await q.enqueue("task", b"data")
+        with pytest.raises(JobNotInProgressError):
+            await q.heartbeat(job.id)
+
+
+async def test_heartbeat_swept_in_same_batch_raises() -> None:
+    async with BrokerQueue(InMemoryStorage(), stale_timeout=timedelta(0)) as q:
+        await q.enqueue("task", b"data")
+        [job] = await q.dequeue("task")
+        with pytest.raises(JobNotInProgressError):
+            await q.heartbeat(job.id)
+        stored = (await q.read_state()).find(job.id)
+        assert stored is not None
+        assert stored.status == JobStatus.QUEUED
+        assert stored.heartbeat_at is None
 
 
 # ---------------------------------------------------------------------------

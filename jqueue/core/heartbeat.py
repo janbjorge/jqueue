@@ -18,8 +18,8 @@ Usage
 If the worker raises, the heartbeat task is cancelled. Callers should
 nack() the job in an except/finally block.
 
-The loop stops on JobNotFoundError; other JQueueErrors are retried on the
-next interval.
+The loop stops on JobNotFoundError or JobNotInProgressError; other
+JQueueErrors are retried on the next interval.
 
 HeartbeatManager is typed against the structural Protocol _HasHeartbeat, so
 it works with BrokerQueue, DirectQueue, and GroupCommitLoop without any
@@ -34,7 +34,7 @@ from datetime import timedelta
 from types import TracebackType
 from typing import Protocol
 
-from jqueue.domain.errors import JobNotFoundError, JQueueError
+from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError, JQueueError
 
 
 class _HasHeartbeat(Protocol):
@@ -88,8 +88,8 @@ class HeartbeatManager:
             await asyncio.sleep(self.interval.total_seconds())
             try:
                 await self.queue.heartbeat(self.job_id)
-            except JobNotFoundError:
-                # Job was acked or removed — stop silently.
+            except (JobNotFoundError, JobNotInProgressError):
+                # Job was acked, removed or re-queued.
                 return
             except JQueueError:
                 # Transient: retry on the next interval.

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from jqueue.core.queries import StateQueries
-from jqueue.domain.errors import JobNotFoundError
+from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError
 from jqueue.domain.models import Job, JobStatus, QueueState
 
 NOW = datetime(2024, 1, 1, tzinfo=UTC)
@@ -83,8 +83,32 @@ def test_release_returns_job_to_queued() -> None:
 def test_touch_updates_heartbeat() -> None:
     job = Job.new("task", b"data")
     q = _queries(job)
+    q.claim(None, 1, NOW)
     later = NOW + timedelta(seconds=30)
     assert q.touch(job.id, later).heartbeat_at == later
+
+
+def test_touch_queued_job_raises_and_leaves_state_unchanged() -> None:
+    job = Job.new("task", b"data")
+    q = _queries(job)
+    before = q.state
+    with pytest.raises(JobNotInProgressError) as exc_info:
+        q.touch(job.id, NOW)
+    assert exc_info.value.job_id == job.id
+    assert exc_info.value.status == JobStatus.QUEUED
+    assert q.state is before
+
+
+def test_touch_after_stale_requeue_raises() -> None:
+    job = Job.new("task", b"data")
+    q = _queries(job)
+    q.claim(None, 1, NOW)
+    q.requeue_stale(NOW + timedelta(seconds=1))
+    with pytest.raises(JobNotInProgressError):
+        q.touch(job.id, NOW + timedelta(seconds=2))
+    stored = q.find(job.id)
+    assert stored is not None
+    assert stored.heartbeat_at is None
 
 
 @pytest.mark.parametrize("op", ["remove", "release", "touch"])

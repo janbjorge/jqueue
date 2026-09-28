@@ -68,6 +68,7 @@ from jqueue.core.heartbeat import HeartbeatManager
 from jqueue.domain.errors import (
     CASConflictError,
     JobNotFoundError,
+    JobNotInProgressError,
     JQueueError,
     StorageError,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "JQueueError",
     "CASConflictError",
     "JobNotFoundError",
+    "JobNotInProgressError",
     "StorageError",
     # Port (for typing custom adapters)
     "ObjectStoragePort",

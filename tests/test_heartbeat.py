@@ -3,10 +3,13 @@ from datetime import timedelta
 
 import pytest
 
+from jqueue.adapters.storage.memory import InMemoryStorage
+from jqueue.core.direct import DirectQueue
 from jqueue.core.heartbeat import HeartbeatManager
 from jqueue.domain.errors import (
     CASConflictError,
     JobNotFoundError,
+    JobNotInProgressError,
     JQueueError,
     StorageError,
 )
@@ -108,6 +111,35 @@ async def test_job_not_found_stops_heartbeat_silently() -> None:
         await asyncio.sleep(0.04)
 
     assert len(queue.calls) == 1
+
+
+async def test_job_not_in_progress_stops_heartbeat_silently() -> None:
+    queue = _MockQueue(side_effect=JobNotInProgressError("job-1", "queued"))
+    async with HeartbeatManager(
+        queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
+    ):
+        await asyncio.sleep(0.04)
+
+    assert len(queue.calls) == 1
+
+
+async def test_heartbeat_stops_after_real_stale_requeue() -> None:
+    queue = DirectQueue(InMemoryStorage())
+    await queue.enqueue("task", b"data")
+    [job] = await queue.dequeue("task")
+    await queue.requeue_stale(timedelta(seconds=-1))
+
+    hb = HeartbeatManager(
+        queue=queue, job_id=job.id, interval=timedelta(milliseconds=5)
+    )
+    async with hb:
+        await asyncio.sleep(0.04)
+        assert hb._task is not None
+        assert hb._task.done()
+
+    stored = (await queue.read_state()).find(job.id)
+    assert stored is not None
+    assert stored.heartbeat_at is None
 
 
 @pytest.mark.parametrize(
