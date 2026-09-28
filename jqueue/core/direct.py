@@ -117,12 +117,16 @@ class DirectQueue:
         Read-modify-write with CAS retry loop.
 
         fn(queries) -> result  (synchronous, re-run on a fresh snapshot per retry)
-        Retries up to self.max_retries on CASConflictError.
+        Retries up to self.max_retries on CASConflictError. Skips the write
+        if fn changed nothing.
         """
         for attempt in range(self.max_retries):
             content, etag = await self.storage.read()
-            queries = StateQueries(codec.decode(content))
+            snapshot = codec.decode(content)
+            queries = StateQueries(snapshot)
             result = fn(queries)
+            if queries.state is snapshot:
+                return result
             try:
                 await self.storage.write(codec.encode(queries.state), if_match=etag)
                 return result

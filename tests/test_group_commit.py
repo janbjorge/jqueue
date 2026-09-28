@@ -297,3 +297,77 @@ async def test_commit_batch_retries_on_cas_conflict() -> None:
         assert fail_count == 3
     finally:
         await gcl.stop()
+
+
+# ---------------------------------------------------------------------------
+# No-op batches skip the write
+# ---------------------------------------------------------------------------
+
+
+class _CountingStorage(InMemoryStorage):
+    writes: int = 0
+
+    async def write(self, content: bytes, if_match: str | None = None) -> str:
+        etag = await super().write(content, if_match)
+        self.writes += 1
+        return etag
+
+
+async def test_noop_batch_does_not_write() -> None:
+    storage = _CountingStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        await gcl.enqueue("task", b"data")
+        writes = storage.writes
+
+        results = await asyncio.gather(
+            gcl.dequeue("other"),
+            gcl.dequeue("other"),
+            gcl.ack("nonexistent"),
+            return_exceptions=True,
+        )
+
+        assert results[0] == []
+        assert results[1] == []
+        assert isinstance(results[2], JobNotFoundError)
+        assert storage.writes == writes
+    finally:
+        await gcl.stop()
+
+
+async def test_batch_with_one_change_still_writes_once() -> None:
+    storage = _CountingStorage()
+    gcl = GroupCommitLoop(storage=storage)
+    await gcl.start()
+    try:
+        await gcl.enqueue("task", b"data")
+        writes = storage.writes
+
+        empty, claimed = await asyncio.gather(gcl.dequeue("other"), gcl.dequeue("task"))
+
+        assert empty == []
+        assert len(claimed) == 1
+        assert storage.writes == writes + 1
+        state = await gcl.read_state()
+        assert state.jobs[0].status == JobStatus.IN_PROGRESS
+    finally:
+        await gcl.stop()
+
+
+async def test_stale_sweep_alone_still_writes() -> None:
+    storage = _CountingStorage()
+    gcl = GroupCommitLoop(storage=storage, stale_timeout=timedelta(0))
+    await gcl.start()
+    try:
+        await gcl.enqueue("task", b"data")
+        await gcl.dequeue("task")
+        writes = storage.writes
+
+        assert await gcl.dequeue("other") == []
+
+        assert storage.writes == writes + 1
+        state = await gcl.read_state()
+        assert state.jobs[0].status == JobStatus.QUEUED
+    finally:
+        await gcl.stop()

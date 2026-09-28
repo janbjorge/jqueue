@@ -179,11 +179,13 @@ class GroupCommitLoop:
 
         Retries on CASConflictError. Per-mutation exceptions only fail that
         op's future; the rest of the batch still commits on the same write.
+        Skips the write if the batch changed nothing.
         """
         for attempt in range(_MAX_RETRIES):
             try:
                 content, etag = await self.storage.read()
-                queries = StateQueries(codec.decode(content))
+                snapshot = codec.decode(content)
+                queries = StateQueries(snapshot)
 
                 # Sweep stale jobs on every write cycle (free — no extra I/O)
                 queries.requeue_stale(datetime.now(UTC) - self.stale_timeout)
@@ -196,7 +198,8 @@ class GroupCommitLoop:
                     except Exception as exc:
                         per_op_errors[i] = exc
 
-                await self.storage.write(codec.encode(queries.state), if_match=etag)
+                if queries.state is not snapshot:
+                    await self.storage.write(codec.encode(queries.state), if_match=etag)
 
                 for i, op in enumerate(batch):
                     if op.future.done():
