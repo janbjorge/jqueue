@@ -4,7 +4,12 @@ from datetime import timedelta
 import pytest
 
 from jqueue.core.heartbeat import HeartbeatManager
-from jqueue.domain.errors import JQueueError
+from jqueue.domain.errors import (
+    CASConflictError,
+    JobNotFoundError,
+    JQueueError,
+    StorageError,
+)
 
 # ---------------------------------------------------------------------------
 # Minimal queue stub
@@ -95,16 +100,49 @@ async def test_exception_in_body_still_cancels_task() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_jqueue_error_stops_heartbeat_silently() -> None:
-    """_beat() exits without raising when JQueueError is raised by queue.heartbeat."""
-    queue = _MockQueue(side_effect=JQueueError("job was acked"))
+async def test_job_not_found_stops_heartbeat_silently() -> None:
+    queue = _MockQueue(side_effect=JobNotFoundError("job-1"))
     async with HeartbeatManager(
         queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
     ):
         await asyncio.sleep(0.04)
 
-    # Called at least once (then stopped)
-    assert len(queue.calls) >= 1
+    assert len(queue.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        StorageError("S3 write failed", RuntimeError("timeout")),
+        CASConflictError("Max CAS retries exceeded"),
+        JQueueError("generic"),
+    ],
+)
+async def test_transient_error_does_not_stop_heartbeat(error: Exception) -> None:
+
+    class _FailOnce(_MockQueue):
+        async def heartbeat(self, job_id: str) -> None:
+            self.calls.append(job_id)
+            if len(self.calls) == 1:
+                raise error
+
+    queue = _FailOnce()
+    async with HeartbeatManager(
+        queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
+    ):
+        await asyncio.sleep(0.05)
+
+    assert len(queue.calls) >= 3
+
+
+async def test_persistent_transient_error_keeps_retrying() -> None:
+    queue = _MockQueue(side_effect=StorageError("down", RuntimeError("503")))
+    async with HeartbeatManager(
+        queue=queue, job_id="job-1", interval=timedelta(milliseconds=5)
+    ):
+        await asyncio.sleep(0.05)
+
+    assert len(queue.calls) >= 3
 
 
 async def test_non_jqueue_error_propagates_through_exit() -> None:
