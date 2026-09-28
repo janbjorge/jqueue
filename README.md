@@ -558,7 +558,8 @@ async with HeartbeatManager(
 
 Starts a background task that calls `queue.heartbeat(job_id)` every `interval` seconds.
 The task is cancelled when the context exits. If `heartbeat` raises `JobNotFoundError`
-(e.g., the job was acked by another process), the task stops silently. Other
+(e.g., the job was acked by another process) or `JobNotInProgressError` (the job went
+stale and was re-queued, so this worker lost its claim), the task stops silently. Other
 `JQueueError`s (`StorageError`, `CASConflictError`) are treated as transient: that beat
 is skipped and the next one is attempted on schedule.
 
@@ -594,6 +595,7 @@ from jqueue import (
     JQueueError,       # base class, catches all jqueue errors
     CASConflictError,  # CAS write rejected (etag mismatch), usually retried internally
     JobNotFoundError,  # job_id not in current state; has .job_id attribute
+    JobNotInProgressError,  # heartbeat on a job that is not IN_PROGRESS; .job_id, .status
     StorageError,      # I/O failure from the storage backend; has .cause attribute
 )
 ```
@@ -610,6 +612,10 @@ try:
 except JobNotFoundError:
     pass  # already removed, safe to ignore
 ```
+
+`JobNotInProgressError` is raised by `heartbeat` when the job exists but is no longer
+`IN_PROGRESS` — typically because it went stale and the sweep re-queued it. The worker
+no longer holds the job and another worker may pick it up.
 
 ## Architecture
 
@@ -871,8 +877,9 @@ satisfying that signature works — `BrokerQueue`, `DirectQueue`, `GroupCommitLo
 test double.
 
 Inside the manager, a background task sleeps for `interval` seconds, then calls
-`heartbeat`. If the call raises `JobNotFoundError`, the task exits silently — the job
-has already been handled. Any other `JQueueError` (`StorageError`, `CASConflictError`)
+`heartbeat`. If the call raises `JobNotFoundError` or `JobNotInProgressError`, the task
+exits silently — the job has already been handled, or was re-queued and is no longer
+this worker's. Any other `JQueueError` (`StorageError`, `CASConflictError`)
 is treated as transient: the beat is skipped and retried on the next interval, so a
 single storage blip doesn't let a healthy job go stale. On context exit, the task is
 cancelled.

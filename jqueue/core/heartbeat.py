@@ -18,7 +18,8 @@ Usage
 If the worker raises, the heartbeat task is cancelled. Callers should
 nack() the job in an except/finally block.
 
-The heartbeat loop stops when the job no longer exists (JobNotFoundError).
+The heartbeat loop stops when the job no longer exists (JobNotFoundError)
+or is no longer IN_PROGRESS (JobNotInProgressError — the claim was lost).
 Other JQueueErrors — StorageError, CASConflictError — are treated as
 transient: the beat is skipped and retried on the next interval, so a
 single storage blip does not let the job go stale.
@@ -36,7 +37,7 @@ from datetime import timedelta
 from types import TracebackType
 from typing import Protocol
 
-from jqueue.domain.errors import JobNotFoundError, JQueueError
+from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError, JQueueError
 
 
 class _HasHeartbeat(Protocol):
@@ -90,8 +91,8 @@ class HeartbeatManager:
             await asyncio.sleep(self.interval.total_seconds())
             try:
                 await self.queue.heartbeat(self.job_id)
-            except JobNotFoundError:
-                # Job was acked or removed — stop silently.
+            except (JobNotFoundError, JobNotInProgressError):
+                # Job was acked, removed, or re-queued — stop silently.
                 return
             except JQueueError:
                 # Transient (storage failure, CAS retries exhausted) — retry

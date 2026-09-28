@@ -6,7 +6,11 @@ import pytest
 
 from jqueue.adapters.storage.memory import InMemoryStorage
 from jqueue.core.direct import DirectQueue
-from jqueue.domain.errors import CASConflictError, JobNotFoundError
+from jqueue.domain.errors import (
+    CASConflictError,
+    JobNotFoundError,
+    JobNotInProgressError,
+)
 from jqueue.domain.models import JobStatus
 
 # ---------------------------------------------------------------------------
@@ -189,6 +193,28 @@ async def test_heartbeat_updates_timestamp(queue: DirectQueue) -> None:
 async def test_heartbeat_missing_job_raises(queue: DirectQueue) -> None:
     with pytest.raises(JobNotFoundError):
         await queue.heartbeat("nonexistent-id")
+
+
+async def test_heartbeat_queued_job_raises(queue: DirectQueue) -> None:
+    job = await queue.enqueue("task", b"data")
+    with pytest.raises(JobNotInProgressError):
+        await queue.heartbeat(job.id)
+    stored = (await queue.read_state()).find(job.id)
+    assert stored is not None
+    assert stored.heartbeat_at is None
+
+
+async def test_heartbeat_after_stale_requeue_raises(queue: DirectQueue) -> None:
+    """A worker whose claim was swept must be told, not silently kept alive."""
+    await queue.enqueue("task", b"data")
+    [job] = await queue.dequeue("task")
+    assert await queue.requeue_stale(timedelta(seconds=-1)) == 1
+    with pytest.raises(JobNotInProgressError):
+        await queue.heartbeat(job.id)
+    stored = (await queue.read_state()).find(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.QUEUED
+    assert stored.heartbeat_at is None
 
 
 # ---------------------------------------------------------------------------

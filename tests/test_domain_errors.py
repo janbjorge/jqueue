@@ -3,6 +3,7 @@ import pytest
 from jqueue.domain.errors import (
     CASConflictError,
     JobNotFoundError,
+    JobNotInProgressError,
     JQueueError,
     StorageError,
 )
@@ -59,3 +60,12 @@ def test_storage_error_message_format():
     msg = str(err)
     assert "GCS read failed" in msg
     assert "permission denied" in msg
+
+
+def test_job_not_in_progress_stores_job_id_and_status():
+    err = JobNotInProgressError("abc-123", "queued")
+    assert isinstance(err, JQueueError)
+    assert not isinstance(err, JobNotFoundError)
+    assert err.job_id == "abc-123"
+    assert err.status == "queued"
+    assert str(err) == "Job 'abc-123' is 'queued', not in_progress"

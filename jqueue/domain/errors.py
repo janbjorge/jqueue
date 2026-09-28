@@ -4,6 +4,7 @@ Exception hierarchy for jqueue.
 JQueueError
 ├── CASConflictError   — write rejected because etag did not match
 ├── JobNotFoundError   — job_id not present in current QueueState
+├── JobNotInProgressError — job exists but is not IN_PROGRESS
 └── StorageError       — underlying I/O failure (wraps original exception)
 """
 
@@ -29,6 +30,27 @@ class JobNotFoundError(JQueueError):
     def __init__(self, job_id: str) -> None:
         self.job_id = job_id
         super().__init__(f"Job {job_id!r} not found in queue state")
+
+
+class JobNotInProgressError(JQueueError):
+    """
+    Raised when an operation requires an IN_PROGRESS job but the job is not.
+
+    Typically means the worker lost its claim: the job went stale and was
+    re-queued by the sweep.
+
+    Attributes
+    ----------
+    job_id : str
+        The job that was not IN_PROGRESS.
+    status : str
+        The job's actual status.
+    """
+
+    def __init__(self, job_id: str, status: str) -> None:
+        self.job_id = job_id
+        self.status = str(status)
+        super().__init__(f"Job {job_id!r} is {self.status!r}, not in_progress")
 
 
 class StorageError(JQueueError):

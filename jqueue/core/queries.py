@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime
 
-from jqueue.domain.errors import JobNotFoundError
+from jqueue.domain.errors import JobNotFoundError, JobNotInProgressError
 from jqueue.domain.models import Job, JobStatus, QueueState
 
 
@@ -127,7 +127,7 @@ class StateQueries:
 
     def touch(self, job_id: str, now: datetime) -> Job:
         """
-        Set a job's heartbeat timestamp.
+        Set the heartbeat timestamp of an IN_PROGRESS job.
 
         Returns
         -------
@@ -138,8 +138,14 @@ class StateQueries:
         ------
         JobNotFoundError
             If no job with ``job_id`` exists.
+        JobNotInProgressError
+            If the job is not IN_PROGRESS (e.g. it went stale and was
+            re-queued), so the caller no longer holds it.
         """
-        updated = self._require(job_id).with_heartbeat(now)
+        job = self._require(job_id)
+        if job.status != JobStatus.IN_PROGRESS:
+            raise JobNotInProgressError(job_id, job.status)
+        updated = job.with_heartbeat(now)
         self.state = self.state.with_job_replaced(updated)
         return updated
 
