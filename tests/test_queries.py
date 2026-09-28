@@ -124,6 +124,55 @@ def test_missing_job_raises_and_leaves_state_unchanged(op: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# release_claims
+# ---------------------------------------------------------------------------
+
+
+def test_release_claims_returns_untouched_claim_to_queued() -> None:
+    q = _queries(Job.new("task", b"a"), Job.new("task", b"b"))
+    claimed = q.claim(None, 2, NOW)
+
+    released = q.release_claims(claimed)
+
+    assert [j.id for j in released] == [j.id for j in claimed]
+    assert q.state.in_progress_jobs() == ()
+    assert all(j.heartbeat_at is None for j in q.state.jobs)
+
+
+def test_release_claims_skips_job_heartbeated_since() -> None:
+    q = _queries(Job.new("task", b"a"))
+    [claimed] = q.claim(None, 1, NOW)
+    q.touch(claimed.id, NOW + timedelta(seconds=5))
+    before = q.state
+
+    assert q.release_claims([claimed]) == []
+    assert q.state is before
+
+
+def test_release_claims_skips_job_reclaimed_by_another_worker() -> None:
+    q = _queries(Job.new("task", b"a"))
+    [claimed] = q.claim(None, 1, NOW)
+    q.requeue_stale(NOW + timedelta(seconds=1))
+    [reclaimed] = q.claim(None, 1, NOW + timedelta(seconds=2))
+
+    assert q.release_claims([claimed]) == []
+    stored = q.find(reclaimed.id)
+    assert stored == reclaimed
+
+
+def test_release_claims_skips_missing_and_queued_jobs() -> None:
+    kept = Job.new("task", b"a")
+    q = _queries(kept)
+    [claimed] = q.claim(None, 1, NOW)
+    q.release(claimed.id)
+    gone = Job.new("task", b"gone").with_status(JobStatus.IN_PROGRESS)
+    before = q.state
+
+    assert q.release_claims([claimed, gone]) == []
+    assert q.state is before
+
+
+# ---------------------------------------------------------------------------
 # requeue_stale
 # ---------------------------------------------------------------------------
 

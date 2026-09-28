@@ -19,6 +19,7 @@ are exhausted.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,10 @@ class DirectQueue:
     storage: ObjectStoragePort
     max_retries: int = 10
 
+    _cleanup: set[asyncio.Task[None]] = dataclasses.field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+
     # ------------------------------------------------------------------ #
     # Write operations                                                     #
     # ------------------------------------------------------------------ #
@@ -73,10 +78,21 @@ class DirectQueue:
 
         Optionally filter by entrypoint. Returns the list of claimed jobs.
         Returns an empty list if no jobs are available.
+
+        If cancelled mid-claim, the claimed jobs are released in the background.
         """
-        return await self._transaction(
-            lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+        claim = asyncio.ensure_future(
+            self._transaction(
+                lambda q: q.claim(entrypoint, batch_size, datetime.now(UTC))
+            )
         )
+        try:
+            return await asyncio.shield(claim)
+        except asyncio.CancelledError:
+            task = asyncio.ensure_future(self._release_orphaned(claim))
+            self._cleanup.add(task)
+            task.add_done_callback(self._cleanup.discard)
+            raise
 
     async def ack(self, job_id: str) -> None:
         """Mark a job as done and remove it from the queue."""
@@ -111,6 +127,13 @@ class DirectQueue:
     # ------------------------------------------------------------------ #
     # Internal CAS loop                                                   #
     # ------------------------------------------------------------------ #
+
+    async def _release_orphaned(self, claim: asyncio.Future[list[Job]]) -> None:
+        """Best effort; the stale sweep is the fallback."""
+        with contextlib.suppress(Exception):
+            claimed = await claim
+            if claimed:
+                await self._transaction(lambda q: q.release_claims(claimed))
 
     async def _transaction[T](self, fn: Callable[[StateQueries], T]) -> T:
         """

@@ -148,6 +148,29 @@ class StateQueries:
         self.state = self.state.with_job_replaced(updated)
         return updated
 
+    def release_claims(self, claimed: list[Job]) -> list[Job]:
+        """
+        Return jobs of an abandoned claim to QUEUED; returns those released.
+
+        Skips any job no longer IN_PROGRESS with the claim's heartbeat
+        (heartbeated, acked or re-claimed since). Never raises.
+        """
+        state = self.state
+        released: list[Job] = []
+        for job in claimed:
+            current = state.find(job.id)
+            if (
+                current is None
+                or current.status != JobStatus.IN_PROGRESS
+                or current.heartbeat_at != job.heartbeat_at
+            ):
+                continue
+            updated = current.with_status(JobStatus.QUEUED).with_heartbeat(None)
+            state = state.with_job_replaced(updated)
+            released.append(updated)
+        self.state = state
+        return released
+
     def requeue_stale(self, cutoff: datetime) -> int:
         """
         Return IN_PROGRESS jobs with a heartbeat older than ``cutoff`` to QUEUED.

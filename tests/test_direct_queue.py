@@ -377,3 +377,94 @@ async def test_empty_dequeue_does_not_conflict_with_concurrent_writer() -> None:
 
     assert await queue.dequeue("task") == []
     storage.write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Cancelled dequeue does not orphan claimed jobs
+# ---------------------------------------------------------------------------
+
+
+class _GatedStorage(InMemoryStorage):
+    """InMemoryStorage whose writes wait on ``gate`` once ``armed``."""
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.armed = False
+        self.gate = asyncio.Event()
+        self.write_started = asyncio.Event()
+
+    async def write(self, content: bytes, if_match: str | None = None) -> str:
+        if self.armed:
+            self.write_started.set()
+            await self.gate.wait()
+        return await super().write(content, if_match)
+
+
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+async def test_dequeue_cancelled_during_write_releases_claim() -> None:
+    storage = _GatedStorage()
+    queue = DirectQueue(storage)
+    job = await queue.enqueue("task", b"data")
+    storage.armed = True
+    task = asyncio.create_task(queue.dequeue("task"))
+    await storage.write_started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    storage.armed = False
+    storage.gate.set()
+    await _settle()
+
+    assert queue._cleanup == set()
+    stored = (await queue.read_state()).find(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.QUEUED
+    assert stored.heartbeat_at is None
+
+
+async def test_uncancelled_dequeue_keeps_claim_direct() -> None:
+    storage = _GatedStorage()
+    queue = DirectQueue(storage)
+    job = await queue.enqueue("task", b"data")
+    storage.armed = True
+    task = asyncio.create_task(queue.dequeue("task"))
+    await storage.write_started.wait()
+    storage.armed = False
+    storage.gate.set()
+
+    [claimed] = await task
+    await _settle()
+
+    assert claimed.id == job.id
+    stored = (await queue.read_state()).find(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.IN_PROGRESS
+
+
+async def test_cancelled_dequeue_with_failed_claim_leaves_state_alone() -> None:
+    storage = _GatedStorage()
+    queue = DirectQueue(storage, max_retries=1)
+    job = await queue.enqueue("task", b"data")
+    storage.armed = True
+    task = asyncio.create_task(queue.dequeue("task"))
+    await storage.write_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # A concurrent writer wins, so the gated claim hits a CAS conflict.
+    storage.armed = False
+    other = DirectQueue(storage)
+    await other.enqueue("task", b"other")
+    storage.gate.set()
+    await _settle()
+
+    assert queue._cleanup == set()
+    state = await queue.read_state()
+    assert state.in_progress_jobs() == ()
+    assert state.find(job.id) is not None
