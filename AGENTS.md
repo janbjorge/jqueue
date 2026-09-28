@@ -99,9 +99,7 @@ jqueue/
 - **Dependency injection**: Via constructor parameters
 - **Async-first**: All I/O operations use async/await
 - **CAS semantics**: Compare-and-set for concurrency safety
-- **Queries vs services**: `StateQueries` holds pure, synchronous domain operations on one
-  `QueueState` snapshot; services (`DirectQueue`, `GroupCommitLoop`) own storage I/O and
-  the CAS cycle, and each public method is one unit of work (see `queries-and-services.md`)
+- **Queries vs services**: `StateQueries` is pure state logic; services own I/O and CAS (see `queries-and-services.md`)
 
 ## Code Style Guidelines
 
