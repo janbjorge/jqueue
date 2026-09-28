@@ -161,12 +161,37 @@ def test_sync_write_returns_generation_as_string():
     assert etag == "77"
 
 
-def test_sync_write_reloads_blob_after_upload():
+def test_sync_write_does_not_reload_blob_after_upload():
     pytest.importorskip("google.api_core.exceptions")
     storage, blob, _ = _make_storage()
     blob.generation = 55
     storage._sync_write(b"content", if_match=None)
-    blob.reload.assert_called_once()
+    blob.reload.assert_not_called()
+
+
+def test_sync_write_returns_uploaded_generation_not_a_later_one():
+    pytest.importorskip("google.api_core.exceptions")
+    storage, blob, _ = _make_storage()
+
+    def upload(*args: object, **kwargs: object) -> None:
+        blob.generation = 5  # set from our upload response
+
+    def reload(*args: object, **kwargs: object) -> None:
+        blob.generation = 6  # someone else wrote after us
+
+    blob.upload_from_string.side_effect = upload
+    blob.reload.side_effect = reload
+
+    assert storage._sync_write(b"content", if_match="4") == "5"
+
+
+def test_sync_write_precondition_failed_does_not_reload():
+    gapi_exc = pytest.importorskip("google.api_core.exceptions")
+    storage, blob, _ = _make_storage()
+    blob.upload_from_string.side_effect = gapi_exc.PreconditionFailed("mismatch")
+    with pytest.raises(CASConflictError):
+        storage._sync_write(b"content", if_match="42")
+    blob.reload.assert_not_called()
 
 
 def test_sync_write_precondition_failed_raises_cas_conflict():
