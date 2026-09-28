@@ -12,12 +12,9 @@ S3 supports conditional PutObject via the IfMatch parameter (added Aug 2024).
             → CASConflictError
 
 First write (if_match=None):
-  IfNoneMatch="*" — create-only put; S3 rejects it with PreconditionFailed if
-  the object already exists, so concurrent initialisers cannot overwrite each
-  other.
+  IfNoneMatch="*" — create-only put (PreconditionFailed if it exists).
 
-Concurrent conditional writes to the same key may also be rejected with
-409 ConditionalRequestConflict; that is mapped to CASConflictError as well.
+409 ConditionalRequestConflict is also mapped to CASConflictError.
 
 Compatible with S3-compatible storage that supports conditional writes:
   MinIO, Cloudflare R2, Tigris, etc.

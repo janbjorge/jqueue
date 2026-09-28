@@ -205,7 +205,6 @@ async def test_heartbeat_queued_job_raises(queue: DirectQueue) -> None:
 
 
 async def test_heartbeat_after_stale_requeue_raises(queue: DirectQueue) -> None:
-    """A worker whose claim was swept must be told, not silently kept alive."""
     await queue.enqueue("task", b"data")
     [job] = await queue.dequeue("task")
     assert await queue.requeue_stale(timedelta(seconds=-1)) == 1
