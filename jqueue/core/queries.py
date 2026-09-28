@@ -1,27 +1,8 @@
 """
-StateQueries — pure operations on a single QueueState snapshot.
+StateQueries — pure operations on one QueueState snapshot.
 
-This is the "query" layer described in ``queries-and-services.md``. A
-StateQueries instance wraps the snapshot read at the start of one CAS cycle
-and exposes the domain operations (add, claim, release, touch, remove,
-requeue_stale) that services compose into a unit of work.
-
-StateQueries never performs I/O and never touches ObjectStoragePort. The
-caller (a service such as DirectQueue or GroupCommitLoop) owns the storage
-round-trip: it reads the state, builds a StateQueries, runs operations, and
-CAS-writes ``queries.state`` back.
-
-Each operation is atomic with respect to ``self.state``: the new snapshot is
-computed first and only assigned on success, so an operation that raises
-leaves the state untouched. GroupCommitLoop relies on this for per-operation
-error isolation within a batch.
-
-Usage
------
-    content, etag = await storage.read()
-    queries = StateQueries(codec.decode(content))
-    claimed = queries.claim("send_email", batch_size=5, now=datetime.now(UTC))
-    await storage.write(codec.encode(queries.state), if_match=etag)
+No I/O. Services (DirectQueue, GroupCommitLoop) own the storage read/CAS write.
+An operation that raises leaves ``state`` unchanged.
 """
 
 from __future__ import annotations
